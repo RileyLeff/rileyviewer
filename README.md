@@ -43,4 +43,12 @@ viewer.show(fig)
 plt.close(fig)
 ```
 
-That I actually quite like the semantics of -- it separates out the plot viewing and makes the end of the with block context the end of the plot state stuff. I will likely incrementally add features and fix bugs as I encounter them. If this ends up getting useful I might eventually throw it on pypi and crates.io, idk!
+I actually like the semantics of the with block -- it separates out the plot viewing and makes the end of the with block context the end of the plot state stuff. I will likely incrementally add features and fix bugs as I encounter them. If this ends up getting useful I might eventually throw it on pypi and crates.io, idk!
+
+To try in your project:
+
+`uv add "rileyviewer @ git+https://github.com/rileyleff/rileyviewer.git#subdirectory=python"`
+
+To run the interactive demo:
+
+`cd python && uv sync --extra dev && uv run maturin develop && uv run python ../tests/interactive_demo.py`
