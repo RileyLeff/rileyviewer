@@ -1,0 +1,10 @@
+[package]
+name = "rv_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["serde", "macros"] }
