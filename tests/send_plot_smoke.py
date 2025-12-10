@@ -12,6 +12,9 @@ Smoke test: start a Viewer, send a matplotlib plot, and verify it arrives over W
 
 Usage:
     uv run tests/send_plot_smoke.py
+
+Note: This test uses the default port (7878) and the detached CLI server.
+The server will persist after the test completes. Use `rileyviewer stop` to stop it.
 """
 
 from __future__ import annotations
@@ -28,26 +31,26 @@ import matplotlib.pyplot as plt  # noqa: E402
 import websockets  # noqa: E402
 from rileyviewer import Viewer  # noqa: E402
 
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.getcwd(), ".mplconfig"))
+
 
 async def main() -> None:
-    viewer = Viewer(host="127.0.0.1", port=0)
+    # Use default port with detached CLI server (no browser for CI)
+    viewer = Viewer(open_browser=False)
     addr = viewer.addr
     token = viewer.token
     ws_url = f"ws://{addr}/ws"
     if token:
         ws_url += f"?token={token}"
 
-    try:
-        plot_id = send_test_plot(viewer)
+    plot_id = send_test_plot(viewer)
 
-        async with websockets.connect(ws_url) as ws:
-            msg = await wait_for_plot(ws, plot_id)
+    async with websockets.connect(ws_url) as ws:
+        msg = await wait_for_plot(ws, plot_id)
 
-        assert msg["id"] == plot_id, f"expected {plot_id}, got {msg['id']}"
-        assert msg["content"]["type"] == "Png", f"unexpected type {msg['content']['type']}"
-        print("OK", msg["id"])
-    finally:
-        viewer.shutdown()
+    assert msg["id"] == plot_id, f"expected {plot_id}, got {msg['id']}"
+    assert msg["content"]["type"] == "Png", f"unexpected type {msg['content']['type']}"
+    print("OK", msg["id"])
 
 
 def send_test_plot(viewer: Viewer) -> str:
@@ -67,6 +70,4 @@ async def wait_for_plot(ws: websockets.WebSocketClientProtocol, plot_id: str) ->
 
 
 if __name__ == "__main__":
-    # Avoid matplotlib writing to HOME in some CI contexts
-    os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.getcwd(), ".mplconfig"))
     asyncio.run(main())

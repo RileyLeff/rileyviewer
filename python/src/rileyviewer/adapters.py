@@ -5,8 +5,36 @@ import json
 from typing import Any
 
 
+def _extract_figure_from_axes_array(obj: Any) -> Any:
+    """Extract matplotlib Figure from numpy array of Axes (e.g., from arviz/seaborn).
+
+    Many plotting libraries (arviz, seaborn facetgrid, etc.) return numpy arrays
+    of matplotlib Axes objects. All axes in such an array share a single Figure,
+    so we can extract it from any element.
+
+    Returns the Figure if obj is an array of Axes, otherwise returns None.
+    """
+    # Check if it's array-like with flatten (numpy array or similar)
+    if not (hasattr(obj, '__array__') and hasattr(obj, 'flatten')):
+        return None
+
+    try:
+        flat = obj.flatten()
+        if len(flat) > 0 and hasattr(flat[0], 'get_figure'):
+            return flat[0].get_figure()
+    except (TypeError, IndexError, AttributeError):
+        pass
+
+    return None
+
+
 def send_object(rv, obj: Any) -> str:
     """Best-effort serializer dispatch for common plotting libs."""
+    # numpy array of matplotlib Axes (from arviz, seaborn, etc.)
+    fig = _extract_figure_from_axes_array(obj)
+    if fig is not None:
+        return _send_matplotlib(rv, fig)
+
     # seaborn often returns an object with a .figure attr
     fig = getattr(obj, "figure", None)
     if fig is not None:
@@ -35,6 +63,11 @@ def send_object(rv, obj: Any) -> str:
 
 def send_object_http(viewer, obj: Any) -> str:
     """HTTP-based serializer dispatch for client mode."""
+    # numpy array of matplotlib Axes (from arviz, seaborn, etc.)
+    fig = _extract_figure_from_axes_array(obj)
+    if fig is not None:
+        return _send_matplotlib_http(viewer, fig)
+
     # seaborn often returns an object with a .figure attr
     fig = getattr(obj, "figure", None)
     if fig is not None:

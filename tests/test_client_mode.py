@@ -6,65 +6,62 @@
 #   "rileyviewer @ file:///${PROJECT_ROOT}/python",
 # ]
 # ///
-"""Test that client mode works: second Viewer connects to existing server."""
+"""Test that server reuse works: second Viewer connects to existing server.
+
+This test verifies that:
+1. First Viewer starts a detached server
+2. Second Viewer connects to the same server (doesn't start a new one)
+3. Both viewers can send plots successfully
+"""
 
 import os
 import sys
-import time
-import subprocess
 
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.getcwd(), ".mplconfig"))
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 
 def main():
-    # Use a known token for testing
-    TEST_TOKEN = "test-token-12345"
-
-    # Start server in a subprocess with known token
-    server_proc = subprocess.Popen(
-        [sys.executable, "-c", f"""
-import time
-from rileyviewer import Viewer
-v = Viewer(open_browser=False, token="{TEST_TOKEN}")
-print(f"SERVER: running at {{v.addr}}, token={{v.token}}", flush=True)
-time.sleep(10)
-v.shutdown()
-print("SERVER: shutdown", flush=True)
-"""],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    # Wait for server to start
-    line = server_proc.stdout.readline()
-    print(line.strip())
-    time.sleep(0.5)
-
-    # Now create a second Viewer that should connect as client with same token
     from rileyviewer import Viewer
-    v2 = Viewer(open_browser=False, token=TEST_TOKEN)
-    print(f"CLIENT: addr={v2.addr}, client_mode={v2._client_mode}")
+    from rileyviewer.viewer import _check_server_running, DEFAULT_HOST, DEFAULT_PORT
 
-    if not v2._client_mode:
-        print("ERROR: v2 should be in client mode!")
-        server_proc.terminate()
+    # Ensure no server is running initially
+    if _check_server_running(DEFAULT_HOST, DEFAULT_PORT):
+        print("NOTE: Server already running, will reuse it")
+
+    # First viewer - starts server if not running
+    v1 = Viewer(open_browser=False)
+    print(f"VIEWER 1: addr={v1.addr}, token={v1.token[:8]}...")
+
+    # Second viewer - should connect to existing server
+    v2 = Viewer(open_browser=False)
+    print(f"VIEWER 2: addr={v2.addr}, token={v2.token[:8]}...")
+
+    # Verify both viewers have the same token (from the same server)
+    if v1.token != v2.token:
+        print(f"ERROR: tokens don't match!")
+        print(f"  v1.token = {v1.token}")
+        print(f"  v2.token = {v2.token}")
         sys.exit(1)
 
-    # Send a plot via HTTP
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    # Send plots from both viewers
+    fig1, ax1 = plt.subplots()
+    ax1.plot([1, 2, 3], [1, 4, 9])
+    ax1.set_title("From Viewer 1")
+    plot_id1 = v1.show(fig1)
+    print(f"VIEWER 1: sent plot {plot_id1[:8]}...")
 
-    fig, ax = plt.subplots()
-    ax.plot([1, 2, 3], [1, 4, 9])
-    plot_id = v2.show(fig)
-    print(f"CLIENT: sent plot via HTTP: {plot_id}")
+    fig2, ax2 = plt.subplots()
+    ax2.plot([1, 2, 3], [9, 4, 1])
+    ax2.set_title("From Viewer 2")
+    plot_id2 = v2.show(fig2)
+    print(f"VIEWER 2: sent plot {plot_id2[:8]}...")
 
-    # Wait for server to finish
-    server_proc.terminate()
-    server_proc.wait()
-    print("SUCCESS: client mode works!")
+    print("SUCCESS: server reuse works!")
+    print("NOTE: Server is still running. Use 'rileyviewer stop' to stop it.")
 
 
 if __name__ == "__main__":

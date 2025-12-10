@@ -26,7 +26,8 @@
       "Bash(pgrep:*)",
       "Bash(__NEW_LINE__ uv run tests/debug_spawn.py)",
       "Bash(cd /Users/rileyleff/Documents/dev/rileyviewer uv run tests/debug_spawn.py)",
-      "Bash(cd /Users/rileyleff/Documents/dev/rileyviewer/python uv sync)"
+      "Bash(cd /Users/rileyleff/Documents/dev/rileyviewer/python uv sync)",
+      "Bash(tail -3 uv run python -c \"\nimport matplotlib\nmatplotlib.use(''''Agg'''')\nimport matplotlib.pyplot as plt\nimport numpy as np\n\n# Create a 2x2 grid of subplots - returns an array of Axes\nfig, axes = plt.subplots(2, 2, figsize=(8, 8))\naxes[0, 0].plot([1, 2, 3], [1, 4, 9])\naxes[0, 1].scatter([1, 2, 3], [9, 4, 1])\naxes[1, 0].bar([''''A'''', ''''B'''', ''''C''''], [3, 7, 2])\naxes[1, 1].hist(np.random.randn(100))\nfig.suptitle(''''2x2 Grid Test'''')\n\n# Test the extraction function\nfrom rileyviewer.adapters import _extract_figure_from_axes_array\nextracted = _extract_figure_from_axes_array(axes)\nprint(f''''axes type: {type(axes)}'''')\nprint(f''''axes shape: {axes.shape}'''')\nprint(f''''extracted figure: {extracted}'''')\nprint(f''''same as original fig: {extracted is fig}'''')\n\n# Now test sending through viewer\nfrom rileyviewer import Viewer\nv = Viewer(open_browser=False)\nplot_id = v.show(axes)  # Pass the axes array directly\nprint(f''''Sent plot: {plot_id[:8]}...'''')\n\")"
     ],
     "deny": [],
     "ask": []
