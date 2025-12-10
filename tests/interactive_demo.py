@@ -1,16 +1,23 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "matplotlib",
+#   "numpy",
+#   "rileyviewer @ file:///${PROJECT_ROOT}/python",
+# ]
+# ///
 """
 Interactive demo: starts a viewer, opens the browser, and sends plots.
 
-Run from the python/ directory:
-    uv run python ../tests/interactive_demo.py
+Usage:
+    uv run tests/interactive_demo.py
 """
 
 from __future__ import annotations
 
 import os
 import time
-import webbrowser
 
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.getcwd(), ".mplconfig"))
 
@@ -29,18 +36,15 @@ from rileyviewer import Viewer
 
 def main() -> None:
     print("Starting viewer...")
-    viewer = Viewer(host="127.0.0.1", port=0)
+    # Uses default port 7878 and auto-opens browser on first plot
+    viewer = Viewer()
 
     url = f"http://{viewer.addr}"
     if viewer.token:
         url += f"?token={viewer.token}"
 
     print(f"Viewer running at: {url}")
-    print("Opening browser...")
-    webbrowser.open(url)
-
-    # Give the browser time to connect
-    time.sleep(1.5)
+    print("Browser will open on first plot...")
 
     print("\nSending plots (Ctrl+C to stop)...\n")
 

@@ -6,21 +6,19 @@ use std::{
 use anyhow::Context;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{Query, Request, State},
+    extract::{Query, State},
     http::StatusCode,
-    middleware::from_fn_with_state,
     response::{IntoResponse, Response},
-    routing::get,
-    Router,
+    routing::{get, post},
+    Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use rv_core::PlotMessage;
 use tokio::{
     net::TcpListener,
     sync::{broadcast, oneshot, RwLock},
     task::JoinHandle,
 };
-use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 #[cfg(feature = "embed-assets")]
 use {
@@ -180,25 +178,13 @@ fn build_router(state: PlotState, token: Option<String>, dist_dir: Option<String
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
+        .route("/api/publish", post(publish_handler))
         .with_state((state, token))
         .merge(spa)
 }
 
 async fn health() -> &'static str {
     "ok"
-}
-
-async fn auth_guard(
-    State(expected): State<Option<String>>,
-    req: Request,
-    next: axum::middleware::Next,
-) -> Result<Response, StatusCode> {
-    if let Some(exp) = expected {
-        if !validate_token(req.uri().query(), &exp) {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
-        }
-    }
-    Ok(next.run(req).await)
 }
 
 #[derive(Deserialize)]
@@ -244,25 +230,36 @@ async fn send_history(
     Ok(())
 }
 
-fn validate_token(query: Option<&str>, expected: &str) -> bool {
-    if let Some(q) = query {
-        for pair in q.split('&') {
-            if let Some((k, v)) = pair.split_once('=') {
-                if k == "token" && v == expected {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 fn token_valid(expected: &Option<String>, provided: Option<&str>) -> bool {
     match (expected, provided) {
         (None, _) => true,
         (Some(_), None) => false,
         (Some(exp), Some(p)) => exp == p,
     }
+}
+
+#[derive(Deserialize)]
+struct PublishRequest {
+    token: Option<String>,
+    content: rv_core::PlotContent,
+}
+
+#[derive(Serialize)]
+struct PublishResponse {
+    id: String,
+}
+
+async fn publish_handler(
+    State((state, expected_token)): State<(PlotState, Option<String>)>,
+    Json(req): Json<PublishRequest>,
+) -> Response {
+    if !token_valid(&expected_token, req.token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let msg = PlotMessage::new(req.content);
+    let id = msg.id.clone();
+    state.push(msg).await;
+    Json(PublishResponse { id }).into_response()
 }
 
 fn default_dist_dir() -> std::path::PathBuf {

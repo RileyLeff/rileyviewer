@@ -4,12 +4,13 @@
 # dependencies = [
 #   "matplotlib",
 #   "websockets>=12.0",
+#   "rileyviewer @ file:///${PROJECT_ROOT}/python",
 # ]
 # ///
 """
 Smoke test: start a Viewer, send a matplotlib plot, and verify it arrives over WS.
 
-Run after `uv run maturin develop` in the repo root:
+Usage:
     uv run tests/send_plot_smoke.py
 """
 

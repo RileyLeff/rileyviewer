@@ -3,8 +3,21 @@ name = "rv_cli"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "rileyviewer"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
+dirs = "5.0"
 rv_server = { path = "../rv_server" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+ureq = "2.9"
+uuid = { workspace = true }
+webbrowser = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
