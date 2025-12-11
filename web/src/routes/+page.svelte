@@ -16,23 +16,38 @@
 		content: PlotContent;
 	};
 
-	let socket: WebSocket | null = null;
-	let status: 'idle' | 'connecting' | 'open' | 'closed' | 'error' = 'idle';
-	let error: string | null = null;
-	let plots: PlotMessage[] = [];
-	let activeId: string | null = null;
-	let plotlyEl: HTMLDivElement | null = null;
-	let vegaEl: HTMLDivElement | null = null;
-	let vegaCleanup: (() => void) | null = null;
-	let plotlyModule: any = null;
-	let vegaEmbed: any = null;
-	let historyEl: HTMLDivElement | null = null;
+	let socket: WebSocket | null = $state(null);
+	let status: 'idle' | 'connecting' | 'open' | 'closed' | 'error' = $state('idle');
+	let error: string | null = $state(null);
+	let plots: PlotMessage[] = $state([]);
+	let activeId: string | null = $state(null);
+	let plotlyEl: HTMLDivElement | null = $state(null);
+	let vegaEl: HTMLDivElement | null = $state(null);
+	let vegaCleanup: (() => void) | null = $state(null);
+	let plotlyModule: any = $state(null);
+	let vegaEmbed: any = $state(null);
+	let historyEl: HTMLDivElement | null = $state(null);
+	let thumbnails: Record<string, string> = $state({});
 
-	$: current = plots.find((p) => p.id === activeId) ?? plots.at(-1);
-	$: token = $page.url.searchParams.get('token');
-	$: wsUrl = getWsUrl($page.url, token);
-	$: if (browser && current?.content.type === 'Plotly' && plotlyEl) renderPlotly(current.content);
-	$: if (browser && current?.content.type === 'Vega' && vegaEl) renderVega(current.content);
+	// Thumbnail generation queue to prevent UI freezing
+	let thumbnailQueue: PlotMessage[] = $state([]);
+	let isProcessingThumbnails = $state(false);
+
+	let current = $derived(plots.find((p) => p.id === activeId) ?? plots.at(-1));
+	let token = $derived($page.url.searchParams.get('token'));
+	let wsUrl = $derived(getWsUrl($page.url, token));
+
+	$effect(() => {
+		if (browser && current?.content.type === 'Plotly' && plotlyEl) {
+			renderPlotly(current.id, current.content);
+		}
+	});
+
+	$effect(() => {
+		if (browser && current?.content.type === 'Vega' && vegaEl) {
+			renderVega(current.id, current.content);
+		}
+	});
 
 	onMount(() => {
 		connect();
@@ -58,11 +73,15 @@
 		socket.addEventListener('message', async (event) => {
 			try {
 				const parsed = JSON.parse(event.data) as PlotMessage;
-				plots = [...plots, parsed];
+				plots.push(parsed);
 				activeId = parsed.id;
 				await tick();
 				if (historyEl) {
 					historyEl.scrollLeft = historyEl.scrollWidth;
+				}
+				// Queue thumbnail generation for Plotly/Vega (processed one at a time)
+				if (parsed.content.type === 'Plotly' || parsed.content.type === 'Vega') {
+					queueThumbnail(parsed);
 				}
 			} catch (err) {
 				console.error('failed to parse plot message', err);
@@ -81,7 +100,7 @@
 	}
 
 	function humanTime(ts: number): string {
-		const d = new Date(Number(ts) / 1_000_000);
+		const d = new Date(ts);
 		return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 	}
 
@@ -95,18 +114,126 @@
 	}
 
 	function getThumbnailSrc(plot: PlotMessage): string | null {
+		// Check for generated thumbnail first (Plotly/Vega)
+		const generated = thumbnails[plot.id];
+		if (generated) return generated;
+		// Fall back to native image types
 		return renderSrc(plot.content);
 	}
 
-	async function renderPlotly(content: Extract<PlotContent, { type: 'Plotly' }>) {
+	function queueThumbnail(plot: PlotMessage) {
+		thumbnailQueue.push(plot);
+		processThumbnailQueue();
+	}
+
+	async function processThumbnailQueue() {
+		if (isProcessingThumbnails || thumbnailQueue.length === 0) return;
+		isProcessingThumbnails = true;
+
+		const plot = thumbnailQueue.shift();
+		if (plot) {
+			// Yield to main thread briefly to allow UI updates
+			await new Promise((r) => setTimeout(r, 0));
+			await generateThumbnail(plot);
+		}
+
+		isProcessingThumbnails = false;
+		processThumbnailQueue();
+	}
+
+	async function generateThumbnail(plot: PlotMessage) {
+		if (thumbnails[plot.id]) return; // Already have one
+
+		if (plot.content.type === 'Plotly') {
+			try {
+				const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
+				plotlyModule = Plotly;
+				const payload = JSON.parse(plot.content.data);
+
+				// Create off-screen div for rendering at full size
+				const offscreen = document.createElement('div');
+				offscreen.style.position = 'absolute';
+				offscreen.style.left = '-9999px';
+				offscreen.style.width = '800px';
+				offscreen.style.height = '560px';
+				document.body.appendChild(offscreen);
+
+				// Render at full size with explicit layout dimensions
+				const layout = { ...(payload.layout ?? {}), width: 800, height: 560 };
+				await Plotly.newPlot(offscreen, payload.data ?? payload, layout, { staticPlot: true });
+
+				// Export full-size render, then scale down via canvas for proper proportions
+				const fullDataUrl = await Plotly.toImage(offscreen, { format: 'png', width: 800, height: 560 });
+				Plotly.purge(offscreen);
+				document.body.removeChild(offscreen);
+
+				// Scale down to thumbnail size using canvas
+				const img = new Image();
+				img.src = fullDataUrl;
+				await new Promise((resolve) => (img.onload = resolve));
+
+				const canvas = document.createElement('canvas');
+				canvas.width = 160;
+				canvas.height = 112;
+				const ctx = canvas.getContext('2d');
+				if (ctx) {
+					ctx.drawImage(img, 0, 0, 160, 112);
+					thumbnails[plot.id] = canvas.toDataURL('image/png');
+				}
+			} catch (e) {
+				console.warn('Failed to generate Plotly thumbnail:', e);
+			}
+		} else if (plot.content.type === 'Vega') {
+			try {
+				const embed = vegaEmbed ?? (await import('vega-embed')).default;
+				vegaEmbed = embed;
+				const spec = JSON.parse(plot.content.data);
+
+				// Create off-screen div with explicit size
+				const offscreen = document.createElement('div');
+				offscreen.style.position = 'absolute';
+				offscreen.style.left = '-9999px';
+				offscreen.style.width = '800px';
+				offscreen.style.height = '560px';
+				document.body.appendChild(offscreen);
+
+				// Render with explicit dimensions for consistent proportions
+				const specWithSize = {
+					...spec,
+					width: spec.width ?? 760,
+					height: spec.height ?? 520
+				};
+				const result = await embed(offscreen, specWithSize, { actions: false, renderer: 'canvas' });
+				const canvas = await result.view.toCanvas(1);
+				result.view.finalize();
+				document.body.removeChild(offscreen);
+
+				// Scale down to thumbnail
+				const thumbCanvas = document.createElement('canvas');
+				thumbCanvas.width = 160;
+				thumbCanvas.height = 112;
+				const ctx = thumbCanvas.getContext('2d');
+				if (ctx) {
+					ctx.drawImage(canvas, 0, 0, 160, 112);
+					thumbnails[plot.id] = thumbCanvas.toDataURL('image/png');
+				}
+			} catch (e) {
+				console.warn('Failed to generate Vega thumbnail:', e);
+			}
+		}
+	}
+
+	async function renderPlotly(plotId: string, content: Extract<PlotContent, { type: 'Plotly' }>) {
 		if (!plotlyEl) return;
 		const payload = JSON.parse(content.data);
 		const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
 		plotlyModule = Plotly;
 		await Plotly.react(plotlyEl, payload.data ?? payload, payload.layout ?? {});
+		// Thumbnail generation is handled by the queued generateThumbnail function
+		// to avoid race conditions when plots arrive rapidly
 	}
 
-	async function renderVega(content: Extract<PlotContent, { type: 'Vega' }>) {
+	async function renderVega(plotId: string, content: Extract<PlotContent, { type: 'Vega' }>) {
 		if (!vegaEl) return;
 		vegaCleanup?.();
 		const spec = JSON.parse(content.data);
@@ -114,6 +241,8 @@
 		vegaEmbed = embed;
 		const result = await embed(vegaEl, spec, { actions: false, renderer: 'canvas' });
 		vegaCleanup = () => result.view.finalize();
+		// Thumbnail generation is handled by the queued generateThumbnail function
+		// to avoid race conditions when plots arrive rapidly
 	}
 </script>
 
@@ -137,7 +266,7 @@
 					Token
 				</div>
 			{/if}
-			<button class="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-200 hover:border-slate-500 hover:bg-slate-700" on:click={connect}>
+			<button class="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-200 hover:border-slate-500 hover:bg-slate-700" onclick={connect}>
 				Reconnect
 			</button>
 		</div>
@@ -208,12 +337,12 @@
 								? 'border-emerald-400/60 bg-emerald-400/10'
 								: 'border-slate-700 bg-slate-800/60'
 						}`}
-						on:click={() => (activeId = plot.id)}
+						onclick={() => (activeId = plot.id)}
 					>
 						<div class="w-20 h-14 rounded bg-slate-900 flex items-center justify-center overflow-hidden">
-							{#if getThumbnailSrc(plot)}
+							{#if thumbnails[plot.id] || renderSrc(plot.content)}
 								<img
-									src={getThumbnailSrc(plot)}
+									src={thumbnails[plot.id] ?? renderSrc(plot.content)}
 									alt=""
 									class="w-full h-full object-contain"
 								/>
@@ -229,7 +358,7 @@
 	</footer>
 </div>
 
-<svelte:window on:keydown={(e) => {
+<svelte:window onkeydown={(e) => {
 	if (e.key === 'r' && e.metaKey) {
 		e.preventDefault();
 		connect();

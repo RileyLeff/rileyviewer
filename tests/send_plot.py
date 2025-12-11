@@ -78,7 +78,8 @@ def main():
     plot_id = viewer.show(fig)
     print(f"Sent {plot_type} plot: {plot_id[:8]}...")
     print("\nRun this script again to send more plots!")
-    print("Use 'cargo run --package rv_cli -- stop' to stop the server.")
+    print("Use 'rileyviewer stop' to stop the server.")
+    print("Use 'rileyviewer open' to re-open the browser.")
 
 
 if __name__ == "__main__":

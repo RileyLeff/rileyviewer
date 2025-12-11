@@ -230,6 +230,7 @@ class MatplotlibContext:
 
     def __init__(self, viewer: Viewer) -> None:
         self.viewer = viewer
+        self._captured_figures: list[Any] = []
 
     def __enter__(self) -> "MatplotlibContext":
         return self
@@ -238,9 +239,13 @@ class MatplotlibContext:
         import matplotlib.pyplot as plt
 
         fig = plt.gcf()
+        self._captured_figures.append(fig)
         return self.viewer.show(fig)
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         import matplotlib.pyplot as plt
 
-        plt.close("all")
+        # Only close figures that were captured within this context
+        for fig in self._captured_figures:
+            plt.close(fig)
+        self._captured_figures.clear()

@@ -1,0 +1,164 @@
+This is a very strong prototype. You have successfully implemented a complex architecture that bridges Rust (for performance and system management), Python (for the user API), and Svelte (for the frontend).
+
+The "detached server" architecture via the CLI, combined with a discovery mechanism using a state file (server.json), is the correct approach for the "httpgd" experience where the viewer survives the Python script execution.
+
+Here is a thorough review of the codebase with specific architectural and code-level recommendations.
+
+1. Critical Architecture Review: The "Timestamp" Bug
+Location: crates/rv_core/src/lib.rs and web/src/routes/+page.svelte
+
+You are storing the timestamp as i128 (nanoseconds) and serializing it as a standard JSON number.
+
+Rust: OffsetDateTime::now_utc().unix_timestamp_nanos() returns an i128.
+
+JavaScript: JSON.parse treats all numbers as IEEE 754 double-precision floats.
+
+The Issue: The safe integer limit in JavaScript is 2 
+53
+ −1 (approx 9×10 
+15
+ ). Current Unix nanoseconds are approx 1.7×10 
+18
+ .
+
+Result: The timestamp will be rounded/truncated in the browser, causing incorrect times or sorting jitter.
+
+Fix: Serialize the timestamp as a string or downgrade to milliseconds (u64).
+
+In crates/rv_core/src/lib.rs:
+
+Rust
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlotMessage {
+    pub id: String,
+    // Serialize as string to preserve precision in JS
+    #[serde(with = "serde_string")] 
+    pub timestamp: i128, 
+    pub content: PlotContent,
+}
+
+// Helper module for string serialization
+mod serde_string {
+    use std::fmt::Display;
+    use std::str::FromStr;
+    use serde::{de, Serializer, Deserializer};
+
+    pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where T: Display, S: Serializer {
+        serializer.collect_str(value)
+    }
+
+    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+    where T: FromStr, T::Err: Display, D: Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(de::Error::custom)
+    }
+}
+2. Distribution Strategy (The Python/Rust Gap)
+Location: python/src/rileyviewer/viewer.py -> _find_cli_binary
+
+Your current logic looks for the binary in Cargo target directories or local paths.
+
+Dev Mode: Works great.
+
+Production (pip install rileyviewer): This will fail. maturin packages the shared library (_core.abi3.so), but it does not automatically compile and bundle the rv_cli binary executable into the wheel unless you explicitly script it to do so.
+
+Consequence: When a user pip installs this, _spawn_server will fail to find the binary, fallback to RustViewer (embedded), and when the Python script finishes, the process exits, killing the server and the browser view. This breaks your core value proposition (persistence).
+
+Recommendation: You have two options:
+
+Bundle the binary: Use advanced Maturin configuration or a setup.py wrapper to build rv_cli and place it inside python/src/rileyviewer/bin/, then update _find_cli_binary to look relative to __file__.
+
+Double-Fork in Python: If the CLI isn't found, you can use multiprocessing or subprocess.Popen with the -m rileyviewer flag (if you expose a pure Python entry point that wraps the _core server) to detach a Python process that keeps the embedded Rust server alive.
+
+3. Frontend Optimization
+Location: web/src/routes/+page.svelte
+
+You are generating thumbnails on the client side (generateThumbnail).
+
+Pros: Saves backend complexity.
+
+Cons: If a user runs a loop generating 50 complex Plotly charts in 2 seconds, the browser UI thread will lock up trying to render 50 invisible Plotly instances and toImage calls simultaneously.
+
+Recommendation: Add a concurrency queue or a debounce to the thumbnail generation. Only generate thumbnails when the system is idle, or process them one by one.
+
+TypeScript
+
+// web/src/routes/+page.svelte
+// Simple queue to prevent UI freezing
+let thumbnailQueue: PlotMessage[] = [];
+let isProcessingThumbnails = false;
+
+async function processThumbnailQueue() {
+    if (isProcessingThumbnails || thumbnailQueue.length === 0) return;
+    isProcessingThumbnails = true;
+    
+    const plot = thumbnailQueue.shift();
+    if (plot) {
+        // Yield to main thread briefly to allow UI updates
+        await new Promise(r => setTimeout(r, 0)); 
+        await generateThumbnail(plot);
+    }
+    
+    isProcessingThumbnails = false;
+    processThumbnailQueue();
+}
+
+// In your socket message handler:
+thumbnailQueue.push(parsed);
+processThumbnailQueue();
+4. Matplotlib State Management
+Location: python/src/rileyviewer/viewer.py
+
+In MatplotlibContext.__exit__, you call plt.close("all").
+
+Python
+
+def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    import matplotlib.pyplot as plt
+    plt.close("all")
+This is very aggressive. If the user has other plots open (perhaps using a different backend or specifically intended to be saved later manually), this wipes them. Better: Close only the specific figures captured within the context, or use plt.close(plt.gcf()).
+
+5. Security & CORS
+Location: crates/rv_server/src/lib.rs
+
+You are enabling CorsLayer::permissive() in the CLI but I don't see it explicitly configured in the library build_router (it might be implied or missing).
+
+Since the server runs on localhost with a randomized port/token, CSRF is a theoretical risk if a malicious site tries to POST to localhost:7878.
+
+Good news: You check the token on both WS upgrade and POST. This is sufficient protection provided the token isn't leaked.
+
+Nit: The token is passed in the URL query string (?token=...). Browser history and server logs (if you added logging) might record this. It's generally acceptable for local tools, but sending it via Authorization: Bearer header for the POST requests would be cleaner. The WebSocket query param is fine as headers are hard with standard JS WebSocket API.
+
+6. Rust Code Specifics
+A. Error Handling in rv_py In crates/rv_py/src/lib.rs:
+
+Rust
+
+fn to_py_err(err: impl std::fmt::Display) -> PyErr {
+    PyRuntimeError::new_err(err.to_string())
+}
+If the server fails to bind (e.g., port in use and fallback fails), the Python user gets a generic "RuntimeError". Improvement: Map anyhow errors more specifically. If it's an AddrInUse, raise a Python ConnectionError or similar.
+
+B. The "History" Limit In crates/rv_server/src/lib.rs, HISTORY_LIMIT is const 200. If I leave this running for days while debugging a script, I might lose early context. Improvement: Make this configurable via the CLI args/ServerConfig.
+
+7. Nitpicks & Polish
+web/package.json: You are using plotly.js-dist-min. Good choice.
+
+.gitignore: In python/.gitignore, you should also ignore rileyviewer/bin/ if you decide to place the compiled binary there.
+
+tests/examples/plotly_basic.py: The imports import plotly.graph_objects as go are inside the script but the script metadata requires plotly. This is fine, just confirming uv handles this correctly (it does).
+
+Svelte: You are using {@html current.content.data} for the HTML type. Ensure the backend (or the Python adapter) sanitizes this if there's any chance of input injection, though in this local-tool context, XSS is low risk (you are XSSing yourself).
+
+Summary of Next Steps
+Fix the Timestamp: Change Rust struct to serialize i128 as string or use u64 milliseconds.
+
+Solve the Binary Distribution: Decide how pip install users get the rv_cli executable.
+
+Client-Side Throttle: Add a queue for thumbnail generation in Svelte.
+
+Refine Context Manager: Change plt.close("all") to plt.close(fig).
+
+This is "ship-able" logic for a developer tool, but the distribution packaging will be your biggest hurdle for general adoption. Great job on the tokio <-> pyo3 integration; that is notoriously tricky to get right.

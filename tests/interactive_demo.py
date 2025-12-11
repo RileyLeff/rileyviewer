@@ -115,17 +115,12 @@ def main() -> None:
         print(f"Sent plot 5: {plot_id}")
 
         print("\n--- All plots sent! ---")
-        print("Press Ctrl+C to shutdown the viewer...")
-
-        # Keep running so the viewer stays up
-        while True:
-            time.sleep(1)
+        print("Server continues running in background.")
+        print("Use 'rileyviewer stop' to stop it.")
+        print("Use 'rileyviewer open' to re-open the browser.")
 
     except KeyboardInterrupt:
-        print("\nShutting down...")
-    finally:
-        viewer.shutdown()
-        print("Done!")
+        print("\nInterrupted")
 
 
 if __name__ == "__main__":

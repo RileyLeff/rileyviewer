@@ -15,7 +15,8 @@ pub enum PlotContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlotMessage {
     pub id: String,
-    pub timestamp: i128,
+    /// Unix timestamp in milliseconds (safe for JavaScript Number)
+    pub timestamp: u64,
     pub content: PlotContent,
 }
 
@@ -23,7 +24,7 @@ impl PlotMessage {
     pub fn new(content: PlotContent) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
-            timestamp: OffsetDateTime::now_utc().unix_timestamp_nanos(),
+            timestamp: (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as u64,
             content,
         }
     }

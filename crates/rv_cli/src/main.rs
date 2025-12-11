@@ -41,6 +41,8 @@ enum Command {
     Status,
     /// Stop the running server
     Stop,
+    /// Open browser for running server
+    Open,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -99,6 +101,7 @@ async fn main() -> Result<()> {
         }
         Command::Status => status()?,
         Command::Stop => stop()?,
+        Command::Open => open()?,
     }
     Ok(())
 }
@@ -238,6 +241,31 @@ fn stop() -> Result<()> {
         }
         None => {
             println!("No server state found");
+        }
+    }
+    Ok(())
+}
+
+fn open() -> Result<()> {
+    match read_state() {
+        Some(state) => {
+            if check_server_running(&state.addr) {
+                let url = if let Some(ref t) = state.token {
+                    format!("http://{}/?token={}", state.addr, t)
+                } else {
+                    format!("http://{}/", state.addr)
+                };
+                println!("Opening {}", url);
+                if let Err(e) = webbrowser::open(&url) {
+                    eprintln!("Failed to open browser: {}", e);
+                }
+            } else {
+                println!("Server not running");
+                remove_state();
+            }
+        }
+        None => {
+            println!("No server running. Start one with: rileyviewer serve");
         }
     }
     Ok(())
