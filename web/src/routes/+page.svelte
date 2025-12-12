@@ -296,10 +296,18 @@
 			</div>
 		{:else}
 			<div class="h-full flex items-center justify-center">
-				{#if current.content.type === 'Png' || current.content.type === 'Svg'}
+				{#if current.content.type === 'Png'}
 					{#if renderSrc(current.content)}
 						<img
 							class="max-h-full max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
+							src={renderSrc(current.content) ?? ''}
+							alt="plot"
+						/>
+					{/if}
+				{:else if current.content.type === 'Svg'}
+					{#if renderSrc(current.content)}
+						<img
+							class="h-full w-auto max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
 							src={renderSrc(current.content) ?? ''}
 							alt="plot"
 						/>

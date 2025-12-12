@@ -164,23 +164,41 @@ def _send_matplotlib_animation_http(viewer, anim: Any) -> str:
 # Custom CSS and JS to style matplotlib animation controls
 _ANIMATION_STYLES = """
 <style>
-/* Dark theme container */
+/* Dark theme container - fill iframe and use flex for scaling */
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
 body {
     background: transparent;
-    margin: 0;
     padding: 16px;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    min-height: calc(100vh - 32px);
     font-family: system-ui, -apple-system, sans-serif;
 }
 
-/* Animation image */
+/* Animation image - scale to fill available space */
+.anim-state {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+}
+
 .anim-state img {
     max-width: 100%;
+    max-height: 100%;
+    width: auto;
     height: auto;
+    object-fit: contain;
     border-radius: 8px;
 }
 
