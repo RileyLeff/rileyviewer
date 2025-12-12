@@ -5,10 +5,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use rv_config::Config;
 use rv_server::{start_server_with, ServerConfig};
 use serde::{Deserialize, Serialize};
-
-const DEFAULT_PORT: u16 = 7878;
 
 #[derive(Parser)]
 #[command(name = "rileyviewer", about = "RileyViewer - Plot viewer for Python")]
@@ -21,21 +20,24 @@ struct Cli {
 enum Command {
     /// Start the viewer server
     Serve {
-        /// Host to bind
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        /// Port to bind
-        #[arg(long, default_value_t = DEFAULT_PORT)]
-        port: u16,
+        /// Host to bind (overrides config file)
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to bind (overrides config file)
+        #[arg(long)]
+        port: Option<u16>,
         /// Authentication token (auto-generated if not specified)
         #[arg(long)]
         token: Option<String>,
         /// Path to web dist directory (for development)
         #[arg(long)]
         dist_dir: Option<String>,
-        /// Open browser automatically (default: true)
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-        open_browser: bool,
+        /// Open browser automatically (overrides config file)
+        #[arg(long)]
+        open_browser: Option<bool>,
+        /// Maximum plots to keep in history (overrides config file)
+        #[arg(long)]
+        history_limit: Option<usize>,
     },
     /// Check if server is running
     Status,
@@ -95,9 +97,16 @@ fn check_server_running(addr: &str) -> bool {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load();
+
     match cli.command {
-        Command::Serve { host, port, token, dist_dir, open_browser } => {
-            serve(host, port, token, dist_dir, open_browser).await?
+        Command::Serve { host, port, token, dist_dir, open_browser, history_limit } => {
+            // CLI flags override config file values
+            let host = host.unwrap_or(config.server.host);
+            let port = port.unwrap_or(config.server.port);
+            let open_browser = open_browser.unwrap_or(config.server.open_browser);
+            let history_limit = history_limit.unwrap_or(config.server.history_limit);
+            serve(host, port, token, dist_dir, open_browser, history_limit).await?
         }
         Command::Status => status()?,
         Command::Stop => stop()?,
@@ -110,7 +119,7 @@ fn generate_token() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
-async fn serve(host: String, port: u16, token: Option<String>, dist_dir: Option<String>, open_browser: bool) -> Result<()> {
+async fn serve(host: String, port: u16, token: Option<String>, dist_dir: Option<String>, open_browser: bool, history_limit: usize) -> Result<()> {
     // Check if already running
     if let Some(state) = read_state() {
         if check_server_running(&state.addr) {
@@ -138,6 +147,7 @@ async fn serve(host: String, port: u16, token: Option<String>, dist_dir: Option<
         port,
         token: token.clone(),
         dist_dir,
+        history_limit,
     })
     .await
     {

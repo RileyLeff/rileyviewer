@@ -9,9 +9,11 @@ import time
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from . import adapters
+from .adapters import MatplotlibFormat
+from .exceptions import CLINotFoundError, ServerConnectionError, ServerStartError
 
 DEFAULT_PORT = 7878
 DEFAULT_HOST = "127.0.0.1"
@@ -87,6 +89,7 @@ def _spawn_server(
     token: Optional[str],
     dist_dir: Optional[str] = None,
     open_browser: bool = True,
+    history_limit: Optional[int] = None,
 ) -> bool:
     """Spawn a detached server process. Returns True if successful."""
     cli = _find_cli_binary()
@@ -99,6 +102,8 @@ def _spawn_server(
         cmd.extend(["--token", token])
     if dist_dir:
         cmd.extend(["--dist-dir", dist_dir])
+    if history_limit is not None:
+        cmd.extend(["--history-limit", str(history_limit)])
 
     # Spawn detached process
     if sys.platform == "win32":
@@ -138,12 +143,16 @@ class Viewer:
         token: Optional[str] = None,
         open_browser: bool = True,
         dist_dir: Optional[str] = None,
+        history_limit: Optional[int] = None,
+        default_format: MatplotlibFormat = "svg",
     ) -> None:
         self._host = host or DEFAULT_HOST
         self._port = port if port is not None else DEFAULT_PORT
         self._token = token
         self._open_browser = open_browser
         self._dist_dir = dist_dir
+        self._history_limit = history_limit
+        self._default_format: MatplotlibFormat = default_format
 
         # Check if server already running
         if _check_server_running(self._host, self._port):
@@ -154,12 +163,8 @@ class Viewer:
                     self._token = state.get("token")
         else:
             # Need to start server - CLI will open browser if requested
-            if not _spawn_server(self._host, self._port, self._token, self._dist_dir, self._open_browser):
-                # CLI not found, fall back to embedded server
-                from ._core import RustViewer
-                self._inner = RustViewer(host=self._host, port=self._port, token=self._token)
-                self._token = self._inner.token
-                return
+            if not _spawn_server(self._host, self._port, self._token, self._dist_dir, self._open_browser, self._history_limit):
+                raise CLINotFoundError()
 
             # Wait for server to start (state file is written before server binds,
             # so by the time health check passes, state file is guaranteed to exist)
@@ -168,7 +173,10 @@ class Viewer:
                 if _check_server_running(self._host, self._port):
                     break
             else:
-                raise RuntimeError(f"Server failed to start on {self._host}:{self._port}")
+                raise ServerStartError(
+                    f"Server failed to start on {self._host}:{self._port} within 5 seconds. "
+                    "Check that the rileyviewer CLI is installed and working."
+                )
 
             # Read token from state file (guaranteed to exist now)
             state = _read_server_state()
@@ -183,8 +191,8 @@ class Viewer:
     def token(self) -> Optional[str]:
         return self._token
 
-    def _http_publish(self, content: dict) -> str:
-        """Publish via HTTP POST."""
+    def _http_publish(self, content: dict, max_retries: int = 3) -> str:
+        """Publish via HTTP POST with retry logic for transient failures."""
         url = f"http://{self._host}:{self._port}/api/publish"
         payload = {"content": content}
         if self._token:
@@ -196,25 +204,74 @@ class Viewer:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            return result["id"]
 
-    def show(self, obj: Any) -> str:
-        """Serialize a plotting object and send it to the server."""
-        return adapters.send_object_http(self, obj)
+        last_error: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+                    return result["id"]
+            except urllib.error.HTTPError as e:
+                # Don't retry client errors (4xx) - they won't succeed
+                if 400 <= e.code < 500:
+                    raise ServerConnectionError(
+                        f"Server rejected request: HTTP {e.code} {e.reason}"
+                    ) from e
+                last_error = e
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                last_error = e
+
+            # Exponential backoff: 0.1s, 0.2s, 0.4s
+            if attempt < max_retries - 1:
+                time.sleep(0.1 * (2 ** attempt))
+
+        raise ServerConnectionError(
+            f"Failed to publish after {max_retries} attempts: {last_error}"
+        ) from last_error
+
+    def show(
+        self,
+        obj: Any,
+        format: Optional[MatplotlibFormat] = None,
+    ) -> str:
+        """Serialize a plotting object and send it to the server.
+
+        Args:
+            obj: The plot object to send. Supported types:
+                - matplotlib Figure (or objects with savefig method)
+                - matplotlib Animation (FuncAnimation, ArtistAnimation)
+                - numpy array of matplotlib Axes (from arviz, seaborn, etc.)
+                - plotly Figure
+                - altair Chart
+                - any object with _repr_html_() method
+            format: For matplotlib figures, the output format ("svg" or "png").
+                    Defaults to the viewer's default_format (which defaults to "svg").
+                    Ignored for animations (always HTML) and other plot types.
+
+        Returns:
+            The plot ID assigned by the server.
+        """
+        return adapters.send_object_http(self, obj, format=format)
 
     def send_png_bytes(self, data: bytes) -> str:
+        """Send raw PNG bytes to the server."""
         encoded = base64.b64encode(data).decode("ascii")
         return self._http_publish({"type": "Png", "data": encoded})
 
+    def send_svg(self, svg: str) -> str:
+        """Send raw SVG string to the server."""
+        return self._http_publish({"type": "Svg", "data": svg})
+
     def send_plotly_json(self, payload: str) -> str:
+        """Send Plotly JSON to the server."""
         return self._http_publish({"type": "Plotly", "data": payload})
 
     def send_vega_json(self, payload: str) -> str:
+        """Send Vega/Vega-Lite JSON to the server."""
         return self._http_publish({"type": "Vega", "data": payload})
 
     def send_html(self, html: str) -> str:
+        """Send raw HTML to the server."""
         return self._http_publish({"type": "Html", "data": html})
 
     def capture(self) -> "MatplotlibContext":

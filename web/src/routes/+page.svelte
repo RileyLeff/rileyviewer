@@ -73,6 +73,10 @@
 		socket.addEventListener('message', async (event) => {
 			try {
 				const parsed = JSON.parse(event.data) as PlotMessage;
+				// Deduplicate by ID (server sends history on reconnect)
+				if (plots.some((p) => p.id === parsed.id)) {
+					return;
+				}
 				plots.push(parsed);
 				activeId = parsed.id;
 				await tick();
@@ -108,7 +112,10 @@
 		if (content.type === 'Png') return `data:image/png;base64,${content.data}`;
 		if (content.type === 'Svg') {
 			if (!browser) return null;
-			return `data:image/svg+xml;base64,${btoa(content.data)}`;
+			// Use TextEncoder to properly handle Unicode characters in SVG
+			const bytes = new TextEncoder().encode(content.data);
+			const base64 = btoa(String.fromCharCode(...bytes));
+			return `data:image/svg+xml;base64,${base64}`;
 		}
 		return null;
 	}

@@ -6,7 +6,7 @@ use std::{
 use anyhow::Context;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{Query, State},
+    extract::{DefaultBodyLimit, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -27,22 +27,23 @@ use {
     rust_embed::RustEmbed,
     tower_http::services::ServeFile,
 };
+use tracing::{debug, warn};
 use uuid::Uuid;
-
-const HISTORY_LIMIT: usize = 200;
 
 #[derive(Clone)]
 struct PlotState {
     history: Arc<RwLock<Vec<PlotMessage>>>,
     tx: broadcast::Sender<PlotMessage>,
+    history_limit: usize,
 }
 
 impl PlotState {
-    fn new() -> Self {
+    fn new(history_limit: usize) -> Self {
         let (tx, _) = broadcast::channel(64);
         Self {
             history: Arc::new(RwLock::new(Vec::new())),
             tx,
+            history_limit,
         }
     }
 
@@ -50,12 +51,15 @@ impl PlotState {
         {
             let mut history = self.history.write().await;
             history.push(msg.clone());
-            if history.len() > HISTORY_LIMIT {
-                let overflow = history.len() - HISTORY_LIMIT;
+            if history.len() > self.history_limit {
+                let overflow = history.len() - self.history_limit;
                 history.drain(0..overflow);
             }
         }
-        let _ = self.tx.send(msg);
+        // Log if broadcast fails (no receivers) - this is expected when no clients are connected
+        if let Err(e) = self.tx.send(msg) {
+            debug!("No WebSocket clients connected to receive plot: {}", e.0.id);
+        }
     }
 }
 
@@ -86,10 +90,24 @@ impl ServerHandle {
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        if let Some(tx) = self.inner.shutdown_tx.lock().unwrap().take() {
+        // Use unwrap_or_else to handle poisoned mutex gracefully - if another thread
+        // panicked while holding the lock, we still want to attempt shutdown
+        if let Some(tx) = self
+            .inner
+            .shutdown_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             let _ = tx.send(());
         }
-        if let Some(task) = self.inner.task.lock().unwrap().take() {
+        if let Some(task) = self
+            .inner
+            .task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             task.await??;
         }
         Ok(())
@@ -102,15 +120,17 @@ pub struct ServerConfig {
     pub port: u16,
     pub token: Option<String>,
     pub dist_dir: Option<String>,
+    pub history_limit: usize,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            host: "127.0.0.1".to_string(),
-            port: 0,
+            host: rv_config::DEFAULT_HOST.to_string(),
+            port: rv_config::DEFAULT_PORT,
             token: None,
             dist_dir: None,
+            history_limit: rv_config::DEFAULT_HISTORY_LIMIT,
         }
     }
 }
@@ -130,7 +150,7 @@ pub async fn start_server_with(config: ServerConfig) -> anyhow::Result<ServerHan
         .clone()
         .or_else(|| Some(Uuid::new_v4().simple().to_string()));
 
-    let state = PlotState::new();
+    let state = PlotState::new(config.history_limit);
     let router = build_router(state.clone(), token.clone(), config.dist_dir.clone());
     let bind_addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
@@ -179,6 +199,7 @@ fn build_router(state: PlotState, token: Option<String>, dist_dir: Option<String
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
         .route("/api/publish", post(publish_handler))
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for animations
         .with_state((state, token))
         .merge(spa)
 }
@@ -206,13 +227,24 @@ async fn ws_handler(
 async fn handle_socket(state: PlotState, mut socket: WebSocket) {
     // send history first
     let history = state.history.read().await.clone();
-    let _ = send_history(history, &mut socket).await;
+    let history_count = history.len();
+    if let Err(e) = send_history(history, &mut socket).await {
+        warn!("Failed to send {} history items to new WebSocket client: {}", history_count, e);
+        return;
+    }
+    debug!("Sent {} history items to new WebSocket client", history_count);
 
     let mut rx = state.tx.subscribe();
     while let Ok(msg) = rx.recv().await {
-        if let Ok(text) = serde_json::to_string(&msg) {
-            if socket.send(Message::Text(text)).await.is_err() {
-                break;
+        match serde_json::to_string(&msg) {
+            Ok(text) => {
+                if let Err(e) = socket.send(Message::Text(text)).await {
+                    debug!("WebSocket client disconnected: {}", e);
+                    break;
+                }
+            }
+            Err(e) => {
+                warn!("Failed to serialize plot message {}: {}", msg.id, e);
             }
         }
     }
@@ -223,8 +255,9 @@ async fn send_history(
     socket: &mut WebSocket,
 ) -> Result<(), axum::Error> {
     for msg in history {
-        if let Ok(text) = serde_json::to_string(&msg) {
-            socket.send(Message::Text(text)).await?;
+        match serde_json::to_string(&msg) {
+            Ok(text) => socket.send(Message::Text(text)).await?,
+            Err(e) => warn!("Failed to serialize history message {}: {}", msg.id, e),
         }
     }
     Ok(())
@@ -289,7 +322,7 @@ fn embedded_assets_service() -> Router {
                 return Response::builder()
                     .header(header::CONTENT_TYPE, mime.as_ref())
                     .body(body)
-                    .unwrap();
+                    .expect("valid response with content-type header");
             }
 
             // SPA fallback: if the path doesn't look like an asset, serve index.html
@@ -299,14 +332,14 @@ fn embedded_assets_service() -> Router {
                     return Response::builder()
                         .header(header::CONTENT_TYPE, "text/html")
                         .body(body)
-                        .unwrap();
+                        .expect("valid response with text/html content-type");
                 }
             }
 
             Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .body(Body::from("404"))
-                .unwrap()
+                .expect("valid 404 response")
         }),
     )
 }
