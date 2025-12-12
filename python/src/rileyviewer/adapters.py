@@ -161,7 +161,7 @@ def _send_matplotlib_animation_http(viewer, anim: Any) -> str:
     return viewer.send_html(html)
 
 
-# Custom CSS to style matplotlib animation controls
+# Custom CSS and JS to style matplotlib animation controls
 _ANIMATION_STYLES = """
 <style>
 /* Dark theme container */
@@ -250,10 +250,13 @@ body:hover .anim-controls {
     border: 1px solid #334155;
     border-radius: 6px;
     color: #e2e8f0;
-    padding: 6px 10px;
+    padding: 6px 8px;
     cursor: pointer;
     transition: all 0.15s ease;
     font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .anim-buttons button:hover {
@@ -265,9 +268,17 @@ body:hover .anim-controls {
     background: #475569;
 }
 
-/* Font Awesome icon color */
-.anim-buttons button i {
-    color: #e2e8f0;
+/* Hide Font Awesome icons, show our SVG icons */
+.anim-buttons button i.fa {
+    display: none;
+}
+
+.anim-buttons button svg {
+    width: 14px;
+    height: 14px;
+    stroke: #e2e8f0;
+    stroke-width: 2;
+    fill: none;
 }
 
 /* Loop mode form */
@@ -290,6 +301,33 @@ body:hover .anim-controls {
     accent-color: #10b981;
 }
 </style>
+<script>
+// Replace Font Awesome icons with Lucide-style SVG icons
+document.addEventListener('DOMContentLoaded', function() {
+    const icons = {
+        'fa-minus': '<svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+        'fa-plus': '<svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+        'fa-fast-backward': '<svg viewBox="0 0 24 24"><polygon points="11,19 2,12 11,5"/><polygon points="22,19 13,12 22,5"/></svg>',
+        'fa-step-backward': '<svg viewBox="0 0 24 24"><polygon points="19,20 9,12 19,4"/><line x1="5" y1="4" x2="5" y2="20"/></svg>',
+        'fa-play fa-flip-horizontal': '<svg viewBox="0 0 24 24" style="transform:scaleX(-1)"><polygon points="5,3 19,12 5,21" fill="#e2e8f0" stroke="none"/></svg>',
+        'fa-pause': '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" fill="#e2e8f0" stroke="none"/><rect x="14" y="4" width="4" height="16" fill="#e2e8f0" stroke="none"/></svg>',
+        'fa-play': '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21" fill="#e2e8f0" stroke="none"/></svg>',
+        'fa-step-forward': '<svg viewBox="0 0 24 24"><polygon points="5,4 15,12 5,20"/><line x1="19" y1="4" x2="19" y2="20"/></svg>',
+        'fa-fast-forward': '<svg viewBox="0 0 24 24"><polygon points="13,19 22,12 13,5"/><polygon points="2,19 11,12 2,5"/></svg>'
+    };
+
+    document.querySelectorAll('.anim-buttons button i.fa').forEach(function(el) {
+        const classes = el.className;
+        for (const [faClass, svg] of Object.entries(icons)) {
+            if (classes.includes(faClass.split(' ')[0]) &&
+                (faClass.split(' ').length === 1 || classes.includes(faClass.split(' ')[1] || ''))) {
+                el.insertAdjacentHTML('afterend', svg);
+                break;
+            }
+        }
+    });
+});
+</script>
 """
 
 
