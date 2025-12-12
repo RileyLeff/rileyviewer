@@ -313,9 +313,12 @@
 						<div bind:this={vegaEl} class="w-full h-full"></div>
 					</div>
 				{:else if current.content.type === 'Html'}
-					<div class="prose prose-invert max-h-full overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-						{@html current.content.data}
-					</div>
+					<iframe
+						srcdoc={current.content.data}
+						class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40"
+						sandbox="allow-scripts allow-same-origin"
+						title="HTML content"
+					></iframe>
 				{:else}
 					<pre class="max-h-full overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-xs text-slate-200">
 {JSON.stringify(current.content, null, 2)}

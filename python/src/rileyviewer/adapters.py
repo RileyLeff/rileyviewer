@@ -157,4 +157,156 @@ def _send_matplotlib_http(viewer, fig: Any, format: MatplotlibFormat = "svg") ->
 def _send_matplotlib_animation_http(viewer, anim: Any) -> str:
     """Send a matplotlib animation as interactive HTML via to_jshtml()."""
     html = anim.to_jshtml()
+    html = _inject_animation_styles(html)
     return viewer.send_html(html)
+
+
+# Custom CSS to style matplotlib animation controls
+_ANIMATION_STYLES = """
+<style>
+/* Dark theme container */
+body {
+    background: transparent;
+    margin: 0;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - 32px);
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* Animation image */
+.anim-state img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+/* Controls container - hidden by default, show on hover */
+.anim-controls {
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    background: rgba(15, 23, 42, 0.9);
+    backdrop-filter: blur(8px);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-top: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+body:hover .anim-controls {
+    opacity: 1;
+}
+
+/* Slider styling */
+.anim-slider {
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: #334155;
+    outline: none;
+    margin-bottom: 12px;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.anim-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #10b981;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.anim-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.anim-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #10b981;
+    cursor: pointer;
+    border: none;
+}
+
+/* Button container */
+.anim-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+/* Button styling - shadcn-like */
+.anim-buttons button {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #e2e8f0;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 12px;
+}
+
+.anim-buttons button:hover {
+    background: #334155;
+    border-color: #475569;
+}
+
+.anim-buttons button:active {
+    background: #475569;
+}
+
+/* Font Awesome icon color */
+.anim-buttons button i {
+    color: #e2e8f0;
+}
+
+/* Loop mode form */
+.anim-controls form {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.anim-controls form label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.anim-controls form input[type="radio"] {
+    accent-color: #10b981;
+}
+</style>
+"""
+
+
+def _inject_animation_styles(html: str) -> str:
+    """Inject custom CSS into matplotlib animation HTML."""
+    # Insert our styles right after the Font Awesome link
+    if '<link rel="stylesheet"' in html:
+        # Insert after the first link tag
+        parts = html.split('</head>', 1)
+        if len(parts) == 2:
+            return parts[0] + _ANIMATION_STYLES + '</head>' + parts[1]
+        # No </head>, insert after first link
+        idx = html.find('>')
+        if idx > 0:
+            # Find end of first link tag
+            link_end = html.find('>', html.find('<link'))
+            if link_end > 0:
+                return html[:link_end+1] + _ANIMATION_STYLES + html[link_end+1:]
+    # Fallback: prepend styles
+    return _ANIMATION_STYLES + html
