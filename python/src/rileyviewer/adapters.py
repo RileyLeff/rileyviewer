@@ -42,39 +42,6 @@ def _extract_figure_from_axes_array(obj: Any) -> Any:
     return None
 
 
-def send_object(rv, obj: Any) -> str:
-    """Best-effort serializer dispatch for common plotting libs."""
-    # numpy array of matplotlib Axes (from arviz, seaborn, etc.)
-    fig = _extract_figure_from_axes_array(obj)
-    if fig is not None:
-        return _send_matplotlib(rv, fig)
-
-    # seaborn often returns an object with a .figure attr
-    fig = getattr(obj, "figure", None)
-    if fig is not None:
-        return _send_matplotlib(rv, fig)
-
-    # matplotlib Figure or objects exposing savefig
-    if hasattr(obj, "savefig"):
-        return _send_matplotlib(rv, obj)
-
-    # plotly
-    if obj.__class__.__module__.startswith("plotly") or hasattr(obj, "to_plotly_json"):
-        payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_plotly_json())
-        return rv.send_plotly_json(payload)
-
-    # altair / vega-lite
-    if obj.__class__.__module__.startswith("altair") or hasattr(obj, "to_dict"):
-        payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_dict())
-        return rv.send_vega_json(payload)
-
-    # ipy/html fallback
-    if hasattr(obj, "_repr_html_"):
-        return rv.send_html(obj._repr_html_())
-
-    raise UnsupportedPlotTypeError(type(obj))
-
-
 def send_object_http(
     viewer,
     obj: Any,
@@ -114,8 +81,8 @@ def send_object_http(
         payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_plotly_json())
         return viewer.send_plotly_json(payload)
 
-    # altair / vega-lite
-    if obj.__class__.__module__.startswith("altair") or hasattr(obj, "to_dict"):
+    # altair / vega-lite (check module name, not just to_dict which is too broad)
+    if obj.__class__.__module__.startswith("altair"):
         payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_dict())
         return viewer.send_vega_json(payload)
 
@@ -124,20 +91,6 @@ def send_object_http(
         return viewer.send_html(obj._repr_html_())
 
     raise UnsupportedPlotTypeError(type(obj))
-
-
-def _send_matplotlib(rv, fig: Any, format: MatplotlibFormat = "svg") -> str:
-    """Send a matplotlib figure (legacy RustViewer API - kept for compatibility)."""
-    import matplotlib.pyplot as plt
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format=format)
-    plt.close(fig)
-
-    if format == "svg":
-        return rv.send_svg(buf.getvalue().decode("utf-8"))
-    else:
-        return rv.send_png(buf.getvalue())
 
 
 def _send_matplotlib_http(viewer, fig: Any, format: MatplotlibFormat = "svg") -> str:
@@ -183,7 +136,7 @@ body {
     font-family: system-ui, -apple-system, sans-serif;
 }
 
-/* Animation image - scale to fill available space */
+/* Animation image - constrain to viewport, maintain aspect ratio */
 .anim-state {
     display: flex;
     justify-content: center;
@@ -191,11 +144,12 @@ body {
     flex: 1;
     min-height: 0;
     width: 100%;
+    overflow: hidden;
 }
 
 .anim-state img {
-    max-width: 100%;
     max-height: 100%;
+    max-width: 100%;
     width: auto;
     height: auto;
     object-fit: contain;

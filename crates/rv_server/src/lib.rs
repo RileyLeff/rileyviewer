@@ -235,16 +235,27 @@ async fn handle_socket(state: PlotState, mut socket: WebSocket) {
     debug!("Sent {} history items to new WebSocket client", history_count);
 
     let mut rx = state.tx.subscribe();
-    while let Ok(msg) = rx.recv().await {
-        match serde_json::to_string(&msg) {
-            Ok(text) => {
-                if let Err(e) = socket.send(Message::Text(text)).await {
-                    debug!("WebSocket client disconnected: {}", e);
-                    break;
+    loop {
+        match rx.recv().await {
+            Ok(msg) => {
+                match serde_json::to_string(&msg) {
+                    Ok(text) => {
+                        if let Err(e) = socket.send(Message::Text(text)).await {
+                            debug!("WebSocket client disconnected: {}", e);
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to serialize plot message {}: {}", msg.id, e);
+                    }
                 }
             }
-            Err(e) => {
-                warn!("Failed to serialize plot message {}: {}", msg.id, e);
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                warn!("WebSocket client lagged, skipped {} messages", n);
+            }
+            Err(broadcast::error::RecvError::Closed) => {
+                debug!("Broadcast channel closed");
+                break;
             }
         }
     }

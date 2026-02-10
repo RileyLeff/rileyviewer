@@ -49,7 +49,7 @@ async def main() -> None:
         msg = await wait_for_plot(ws, plot_id)
 
     assert msg["id"] == plot_id, f"expected {plot_id}, got {msg['id']}"
-    assert msg["content"]["type"] == "Png", f"unexpected type {msg['content']['type']}"
+    assert msg["content"]["type"] == "Svg", f"unexpected type {msg['content']['type']}"
     print("OK", msg["id"])
 
 

@@ -132,15 +132,6 @@ async fn serve(host: String, port: u16, token: Option<String>, dist_dir: Option<
 
     // Generate token upfront if not provided
     let token = token.or_else(|| Some(generate_token()));
-    let addr_str = format!("{}:{}", host, port);
-
-    // Write state file BEFORE starting server to eliminate race condition
-    // By the time /health returns 200, clients can rely on this file existing
-    write_state(&ServerState {
-        pid: std::process::id(),
-        addr: addr_str.clone(),
-        token: token.clone(),
-    })?;
 
     let handle = match start_server_with(ServerConfig {
         host: host.clone(),
@@ -153,13 +144,18 @@ async fn serve(host: String, port: u16, token: Option<String>, dist_dir: Option<
     {
         Ok(h) => h,
         Err(e) => {
-            // Server failed to start, clean up state file
-            remove_state();
             return Err(e);
         }
     };
 
     let addr: SocketAddr = handle.addr();
+
+    // Write state file AFTER server binds successfully, using actual bound address
+    write_state(&ServerState {
+        pid: std::process::id(),
+        addr: addr.to_string(),
+        token: token.clone(),
+    })?;
 
     println!("RileyViewer server started");
     println!("  Address: http://{}", addr);

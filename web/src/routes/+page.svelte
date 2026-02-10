@@ -39,19 +39,26 @@
 
 	$effect(() => {
 		if (browser && current?.content.type === 'Plotly' && plotlyEl) {
-			renderPlotly(current.id, current.content);
+			renderPlotly(current.content);
 		}
 	});
 
 	$effect(() => {
 		if (browser && current?.content.type === 'Vega' && vegaEl) {
-			renderVega(current.id, current.content);
+			renderVega(current.content);
 		}
 	});
 
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let reconnectAttempt = $state(0);
+
 	onMount(() => {
 		connect();
-		return () => socket?.close();
+		return () => {
+			vegaCleanup?.();
+			if (reconnectTimer) clearTimeout(reconnectTimer);
+			socket?.close();
+		};
 	});
 
 	function getWsUrl(url: URL, authToken: string | null): string {
@@ -60,14 +67,28 @@
 		return `${proto}//${url.host}/ws${query}`;
 	}
 
+	function scheduleReconnect() {
+		if (reconnectTimer) clearTimeout(reconnectTimer);
+		const delay = Math.min(1000 * 2 ** reconnectAttempt, 10000);
+		reconnectTimer = setTimeout(() => {
+			reconnectAttempt++;
+			connect();
+		}, delay);
+	}
+
 	function connect() {
 		status = 'connecting';
 		error = null;
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
 		socket?.close();
 		socket = new WebSocket(wsUrl);
 
 		socket.addEventListener('open', () => {
 			status = 'open';
+			reconnectAttempt = 0;
 		});
 
 		socket.addEventListener('message', async (event) => {
@@ -94,6 +115,7 @@
 
 		socket.addEventListener('close', () => {
 			status = 'closed';
+			scheduleReconnect();
 		});
 
 		socket.addEventListener('error', (e) => {
@@ -112,10 +134,15 @@
 		if (content.type === 'Png') return `data:image/png;base64,${content.data}`;
 		if (content.type === 'Svg') {
 			if (!browser) return null;
-			// Use TextEncoder to properly handle Unicode characters in SVG
+			// Use TextEncoder + chunked btoa to handle large SVGs safely
+			// (spreading into String.fromCharCode crashes on SVGs > ~65KB)
 			const bytes = new TextEncoder().encode(content.data);
-			const base64 = btoa(String.fromCharCode(...bytes));
-			return `data:image/svg+xml;base64,${base64}`;
+			let binary = '';
+			const chunkSize = 8192;
+			for (let i = 0; i < bytes.length; i += chunkSize) {
+				binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+			}
+			return `data:image/svg+xml;base64,${btoa(binary)}`;
 		}
 		return null;
 	}
@@ -148,33 +175,36 @@
 		processThumbnailQueue();
 	}
 
+	function createOffscreenDiv(): HTMLDivElement {
+		const div = document.createElement('div');
+		div.style.position = 'absolute';
+		div.style.left = '-9999px';
+		div.style.width = '800px';
+		div.style.height = '560px';
+		document.body.appendChild(div);
+		return div;
+	}
+
+	function removeOffscreenDiv(div: HTMLDivElement) {
+		try { document.body.removeChild(div); } catch { /* already removed */ }
+	}
+
 	async function generateThumbnail(plot: PlotMessage) {
 		if (thumbnails[plot.id]) return; // Already have one
 
 		if (plot.content.type === 'Plotly') {
+			const offscreen = createOffscreenDiv();
 			try {
 				const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
 				plotlyModule = Plotly;
 				const payload = JSON.parse(plot.content.data);
 
-				// Create off-screen div for rendering at full size
-				const offscreen = document.createElement('div');
-				offscreen.style.position = 'absolute';
-				offscreen.style.left = '-9999px';
-				offscreen.style.width = '800px';
-				offscreen.style.height = '560px';
-				document.body.appendChild(offscreen);
-
-				// Render at full size with explicit layout dimensions
 				const layout = { ...(payload.layout ?? {}), width: 800, height: 560 };
 				await Plotly.newPlot(offscreen, payload.data ?? payload, layout, { staticPlot: true });
 
-				// Export full-size render, then scale down via canvas for proper proportions
 				const fullDataUrl = await Plotly.toImage(offscreen, { format: 'png', width: 800, height: 560 });
 				Plotly.purge(offscreen);
-				document.body.removeChild(offscreen);
 
-				// Scale down to thumbnail size using canvas
 				const img = new Image();
 				img.src = fullDataUrl;
 				await new Promise((resolve) => (img.onload = resolve));
@@ -189,22 +219,16 @@
 				}
 			} catch (e) {
 				console.warn('Failed to generate Plotly thumbnail:', e);
+			} finally {
+				removeOffscreenDiv(offscreen);
 			}
 		} else if (plot.content.type === 'Vega') {
+			const offscreen = createOffscreenDiv();
 			try {
 				const embed = vegaEmbed ?? (await import('vega-embed')).default;
 				vegaEmbed = embed;
 				const spec = JSON.parse(plot.content.data);
 
-				// Create off-screen div with explicit size
-				const offscreen = document.createElement('div');
-				offscreen.style.position = 'absolute';
-				offscreen.style.left = '-9999px';
-				offscreen.style.width = '800px';
-				offscreen.style.height = '560px';
-				document.body.appendChild(offscreen);
-
-				// Render with explicit dimensions for consistent proportions
 				const specWithSize = {
 					...spec,
 					width: spec.width ?? 760,
@@ -213,9 +237,7 @@
 				const result = await embed(offscreen, specWithSize, { actions: false, renderer: 'canvas' });
 				const canvas = await result.view.toCanvas(1);
 				result.view.finalize();
-				document.body.removeChild(offscreen);
 
-				// Scale down to thumbnail
 				const thumbCanvas = document.createElement('canvas');
 				thumbCanvas.width = 160;
 				thumbCanvas.height = 112;
@@ -226,21 +248,24 @@
 				}
 			} catch (e) {
 				console.warn('Failed to generate Vega thumbnail:', e);
+			} finally {
+				removeOffscreenDiv(offscreen);
 			}
 		}
 	}
 
-	async function renderPlotly(plotId: string, content: Extract<PlotContent, { type: 'Plotly' }>) {
+	async function renderPlotly(content: Extract<PlotContent, { type: 'Plotly' }>) {
 		if (!plotlyEl) return;
 		const payload = JSON.parse(content.data);
 		const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
 		plotlyModule = Plotly;
-		await Plotly.react(plotlyEl, payload.data ?? payload, payload.layout ?? {});
-		// Thumbnail generation is handled by the queued generateThumbnail function
-		// to avoid race conditions when plots arrive rapidly
+		await Plotly.react(plotlyEl, payload.data ?? payload, {
+			...(payload.layout ?? {}),
+			autosize: true,
+		}, { responsive: true });
 	}
 
-	async function renderVega(plotId: string, content: Extract<PlotContent, { type: 'Vega' }>) {
+	async function renderVega(content: Extract<PlotContent, { type: 'Vega' }>) {
 		if (!vegaEl) return;
 		vegaCleanup?.();
 		const spec = JSON.parse(content.data);
@@ -248,8 +273,6 @@
 		vegaEmbed = embed;
 		const result = await embed(vegaEl, spec, { actions: false, renderer: 'canvas' });
 		vegaCleanup = () => result.view.finalize();
-		// Thumbnail generation is handled by the queued generateThumbnail function
-		// to avoid race conditions when plots arrive rapidly
 	}
 </script>
 
@@ -295,16 +318,8 @@
 				</div>
 			</div>
 		{:else}
-			<div class="h-full flex items-center justify-center">
-				{#if current.content.type === 'Png'}
-					{#if renderSrc(current.content)}
-						<img
-							class="max-h-full max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
-							src={renderSrc(current.content) ?? ''}
-							alt="plot"
-						/>
-					{/if}
-				{:else if current.content.type === 'Svg'}
+			{#if current.content.type === 'Png'}
+				<div class="h-full flex items-center justify-center">
 					{#if renderSrc(current.content)}
 						<img
 							class="h-full w-auto max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
@@ -312,27 +327,41 @@
 							alt="plot"
 						/>
 					{/if}
-				{:else if current.content.type === 'Plotly'}
-					<div class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40 p-2">
-						<div bind:this={plotlyEl} class="w-full h-full"></div>
-					</div>
-				{:else if current.content.type === 'Vega'}
-					<div class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40 p-2">
-						<div bind:this={vegaEl} class="w-full h-full"></div>
-					</div>
-				{:else if current.content.type === 'Html'}
+				</div>
+			{:else if current.content.type === 'Svg'}
+				<div class="h-full flex items-center justify-center">
+					{#if renderSrc(current.content)}
+						<img
+							class="h-full w-auto max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
+							src={renderSrc(current.content) ?? ''}
+							alt="plot"
+						/>
+					{/if}
+				</div>
+			{:else if current.content.type === 'Plotly'}
+				<div class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40 p-2">
+					<div bind:this={plotlyEl} class="w-full h-full"></div>
+				</div>
+			{:else if current.content.type === 'Vega'}
+				<div class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40 p-2">
+					<div bind:this={vegaEl} class="w-full h-full"></div>
+				</div>
+			{:else if current.content.type === 'Html'}
+				<div class="h-full flex items-center justify-center">
 					<iframe
 						srcdoc={current.content.data}
-						class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40"
-						sandbox="allow-scripts allow-same-origin"
+						class="h-full w-auto max-w-full aspect-[10/7] rounded-lg border border-slate-800 bg-slate-950/40"
+						sandbox="allow-scripts"
 						title="HTML content"
 					></iframe>
-				{:else}
+				</div>
+			{:else}
+				<div class="h-full flex items-center justify-center">
 					<pre class="max-h-full overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-xs text-slate-200">
 {JSON.stringify(current.content, null, 2)}
 					</pre>
-				{/if}
-			</div>
+				</div>
+			{/if}
 		{/if}
 	</main>
 
@@ -358,9 +387,9 @@
 						onclick={() => (activeId = plot.id)}
 					>
 						<div class="w-20 h-14 rounded bg-slate-900 flex items-center justify-center overflow-hidden">
-							{#if thumbnails[plot.id] || renderSrc(plot.content)}
+							{#if getThumbnailSrc(plot)}
 								<img
-									src={thumbnails[plot.id] ?? renderSrc(plot.content)}
+									src={getThumbnailSrc(plot)}
 									alt=""
 									class="w-full h-full object-contain"
 								/>
@@ -376,9 +405,3 @@
 	</footer>
 </div>
 
-<svelte:window onkeydown={(e) => {
-	if (e.key === 'r' && e.metaKey) {
-		e.preventDefault();
-		connect();
-	}
-}} />

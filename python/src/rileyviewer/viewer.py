@@ -74,7 +74,8 @@ def _find_cli_binary() -> Optional[str]:
             return str(dev_binary)
 
     # Also check relative to the package location (for editable installs)
-    pkg_dir = Path(__file__).parent.parent.parent.parent  # python/src/rileyviewer -> repo root
+    # __file__ = python/src/rileyviewer/viewer.py -> 4x .parent = repo root
+    pkg_dir = Path(__file__).parent.parent.parent.parent
     for profile in ["release", "debug"]:
         dev_binary = pkg_dir / "target" / profile / "rileyviewer"
         if dev_binary.exists():
@@ -120,14 +121,15 @@ def _spawn_server(
         except OSError:
             return False
     else:
-        # Unix: use double-fork via shell to fully detach
-        # The shell handles backgrounding, nohup ensures survival
-        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
-        shell_cmd = f"nohup {cmd_str} >/dev/null 2>&1 &"
+        # Unix: use subprocess.Popen with start_new_session to fully detach
         try:
-            # Use os.system for true shell backgrounding
-            import os as _os
-            _os.system(shell_cmd)
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
             return True
         except OSError:
             return False
