@@ -92,7 +92,7 @@ def send_object_http(
         return _send_dataframe_http(viewer, obj)
 
     # polars DataFrame / LazyFrame
-    if module.startswith("polars"):
+    if module.startswith("polars") and hasattr(obj, "to_arrow"):
         return _send_dataframe_http(viewer, obj)
 
     # ipy/html fallback
