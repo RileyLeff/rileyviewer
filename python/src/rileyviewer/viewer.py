@@ -41,6 +41,28 @@ def _read_server_state() -> Optional[dict]:
     return None
 
 
+_LOCALHOST_ALIASES = {"127.0.0.1", "localhost", "0.0.0.0", "::1", "::"}
+
+
+def _addrs_match(a: str, b: str, port: int) -> bool:
+    """Check if two host:port strings refer to the same local server."""
+    def parse(addr: str) -> tuple:
+        # Split host:port, handling IPv6 [::1]:port format
+        if addr.startswith("["):
+            host_part, _, port_part = addr.rpartition("]:")
+            return host_part.strip("[]"), int(port_part) if port_part else port
+        parts = addr.rsplit(":", 1)
+        return parts[0], int(parts[1]) if len(parts) == 2 else port
+
+    h1, p1 = parse(a)
+    h2, p2 = parse(b)
+    if p1 != p2:
+        return False
+    if h1 == h2:
+        return True
+    return h1 in _LOCALHOST_ALIASES and h2 in _LOCALHOST_ALIASES
+
+
 def _check_server_running(host: str, port: int) -> bool:
     """Check if a server is running on the given host:port."""
     try:
@@ -167,7 +189,7 @@ class Viewer:
             # Server running - read token from state file if we don't have one
             if not self._token:
                 state = _read_server_state()
-                if state and state.get("addr") == f"{self._host}:{self._port}":
+                if state and _addrs_match(state.get("addr", ""), f"{self._host}:{self._port}", self._port):
                     self._token = state.get("token")
         else:
             # Need to start server - CLI will open browser if requested
@@ -191,7 +213,7 @@ class Viewer:
             # is flushed to disk, so retry a few times.
             for _ in range(20):  # 2 seconds max
                 state = _read_server_state()
-                if state and state.get("addr") == f"{self._host}:{self._port}":
+                if state and _addrs_match(state.get("addr", ""), f"{self._host}:{self._port}", self._port):
                     self._token = state.get("token")
                     break
                 time.sleep(0.1)

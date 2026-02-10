@@ -29,6 +29,7 @@
 	let plotlyEl: HTMLDivElement | null = $state(null);
 	let vegaEl: HTMLDivElement | null = $state(null);
 	let vegaCleanup: (() => void) | null = null;
+	let plotlyCleanup: (() => void) | null = null;
 	let plotlyModule: any = null;
 	let vegaEmbed: any = null;
 	let renderGeneration = 0; // cancellation token for async renders
@@ -69,6 +70,7 @@
 		connect();
 		return () => {
 			vegaCleanup?.();
+			plotlyCleanup?.();
 			if (reconnectTimer) clearTimeout(reconnectTimer);
 			socket?.close();
 		};
@@ -295,6 +297,8 @@
 		if (!plotlyEl) return;
 		const gen = ++renderGeneration;
 		try {
+			plotlyCleanup?.();
+			plotlyCleanup = null;
 			const payload = JSON.parse(content.data);
 			const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
 			plotlyModule = Plotly;
@@ -303,6 +307,8 @@
 				...(payload.layout ?? {}),
 				autosize: true,
 			}, { responsive: true });
+			const el = plotlyEl; // capture for closure
+			plotlyCleanup = () => { try { Plotly.purge(el); } catch {} };
 		} catch (e) {
 			console.error('Failed to render Plotly chart:', e);
 		}

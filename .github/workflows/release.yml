@@ -15,6 +15,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Resolve tag: prefer workflow_dispatch input, fall back to pushed tag
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   build-web:
@@ -22,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -71,6 +75,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download web assets
         uses: actions/download-artifact@v4
@@ -136,6 +142,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download CLI binary
         uses: actions/download-artifact@v4
@@ -163,9 +171,9 @@ jobs:
         working-directory: python/dist
         shell: bash
         run: |
-          # Rename from py3-none-any to platform-specific
+          # Rename from py3-none-any to py3-none-{platform} (PEP 427 compliant)
           for f in *.whl; do
-            newname=$(echo "$f" | sed "s/py3-none-any/${{ matrix.platform }}/")
+            newname=$(echo "$f" | sed "s/py3-none-any/py3-none-${{ matrix.platform }}/")
             mv "$f" "$newname"
           done
 
@@ -180,6 +188,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -232,6 +242,8 @@ jobs:
     needs: [build-cli, publish]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download all CLI binaries
         uses: actions/download-artifact@v4
@@ -255,5 +267,6 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: release-assets/*
           generate_release_notes: true

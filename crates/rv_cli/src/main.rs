@@ -76,10 +76,13 @@ fn write_state(state: &ServerState) -> Result<()> {
     let dir = state_dir();
     fs::create_dir_all(&dir).context("failed to create state directory")?;
     let path = state_file();
-    let mut file = fs::File::create(&path).context("failed to create state file")?;
+    let tmp_path = dir.join("server.json.tmp");
+    let mut file = fs::File::create(&tmp_path).context("failed to create temp state file")?;
     let json = serde_json::to_string_pretty(state)?;
     file.write_all(json.as_bytes())?;
     file.sync_all().context("failed to flush state file to disk")?;
+    drop(file);
+    fs::rename(&tmp_path, &path).context("failed to atomically move state file")?;
     Ok(())
 }
 
