@@ -207,6 +207,15 @@ class Viewer:
         """Send raw HTML to the server."""
         return self._http_publish({"type": "Html", "data": html})
 
+    def send_arrow_ipc(self, data: bytes) -> str:
+        """Send Arrow IPC bytes to the server for table rendering."""
+        encoded = base64.b64encode(data).decode("ascii")
+        return self._http_publish({"type": "ArrowIpc", "data": encoded})
+
+    def send_csv(self, csv_text: str) -> str:
+        """Send CSV text to the server for table rendering."""
+        return self._http_publish({"type": "Csv", "data": csv_text})
+
     def capture(self) -> "MatplotlibContext":
         return MatplotlibContext(self)
 

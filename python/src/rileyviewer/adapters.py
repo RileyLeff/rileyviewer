@@ -87,11 +87,54 @@ def send_object_http(
         payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_dict())
         return viewer.send_vega_json(payload)
 
+    # pandas DataFrame
+    if module.startswith("pandas") and hasattr(obj, "to_csv"):
+        return _send_dataframe_http(viewer, obj)
+
+    # polars DataFrame / LazyFrame
+    if module.startswith("polars"):
+        return _send_dataframe_http(viewer, obj)
+
     # ipy/html fallback
     if hasattr(obj, "_repr_html_"):
         return viewer.send_html(obj._repr_html_())
 
     raise UnsupportedPlotTypeError(type(obj))
+
+
+def _send_dataframe_http(viewer, df: Any) -> str:
+    """Send a DataFrame (pandas or polars) via Arrow IPC, falling back to CSV."""
+    try:
+        import pyarrow as pa
+        import pyarrow.ipc
+
+        module = getattr(df.__class__, "__module__", "") or ""
+
+        if module.startswith("polars"):
+            # polars → collect if lazy, then to_arrow()
+            if hasattr(df, "collect"):
+                df = df.collect()
+            arrow_table = df.to_arrow()
+        else:
+            # pandas → pyarrow Table
+            arrow_table = pa.Table.from_pandas(df)
+
+        sink = io.BytesIO()
+        writer = pa.ipc.new_stream(sink, arrow_table.schema)
+        writer.write_table(arrow_table)
+        writer.close()
+        return viewer.send_arrow_ipc(sink.getvalue())
+
+    except ImportError:
+        # pyarrow not installed — fall back to CSV
+        module = getattr(df.__class__, "__module__", "") or ""
+        if module.startswith("polars"):
+            if hasattr(df, "collect"):
+                df = df.collect()
+            csv_text = df.write_csv()
+        else:
+            csv_text = df.to_csv(index=False)
+        return viewer.send_csv(csv_text)
 
 
 def _send_matplotlib_http(viewer, fig: Any, format: MatplotlibFormat = "svg") -> str:
