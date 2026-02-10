@@ -378,6 +378,7 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
 
     let url = format!("http://{}/api/publish", state.addr);
     let resp = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(30))
         .set("Content-Type", "application/json")
         .send_string(&payload)
         .context("failed to send to server")?;
@@ -398,12 +399,12 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
 
 fn detect_from_extension(path: &PathBuf, data: &[u8]) -> String {
     match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
-        Some("png") => "png",
-        Some("svg") => "svg",
-        Some("html" | "htm") => "html",
-        Some("json") => return detect_json_type(data),
-        _ => "png", // default for unknown extensions
-    }.to_string()
+        Some("png") => "png".to_string(),
+        Some("svg") => "svg".to_string(),
+        Some("html" | "htm") => "html".to_string(),
+        Some("json") => detect_json_type(data),
+        _ => detect_from_content(data), // unknown extension: sniff content
+    }
 }
 
 fn detect_from_content(data: &[u8]) -> String {
