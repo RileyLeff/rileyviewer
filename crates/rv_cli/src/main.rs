@@ -3,7 +3,8 @@ use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use base64::Engine;
 use clap::{Parser, Subcommand};
 use rv_config::Config;
 use rv_server::{start_server_with, ServerConfig};
@@ -45,6 +46,14 @@ enum Command {
     Stop,
     /// Open browser for running server
     Open,
+    /// Send a file or stdin to the viewer
+    Send {
+        /// File to send (reads stdin if omitted)
+        file: Option<PathBuf>,
+        /// Content type override: png, svg, plotly, vega, html
+        #[arg(long, value_name = "TYPE")]
+        r#type: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -115,6 +124,7 @@ async fn main() -> Result<()> {
         Command::Status => status()?,
         Command::Stop => stop()?,
         Command::Open => open()?,
+        Command::Send { file, r#type } => send(file, r#type)?,
     }
     Ok(())
 }
@@ -283,4 +293,165 @@ fn open() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
+    let state = read_state().context("No server running. Start one with: rileyviewer serve")?;
+    if !check_server_running(&state.addr) {
+        bail!("Server not running at {}. Start one with: rileyviewer serve", state.addr);
+    }
+
+    // Read input
+    let (data, source_name) = match file {
+        Some(ref path) => {
+            let data = fs::read(path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            (data, path.display().to_string())
+        }
+        None => {
+            let mut data = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut data)
+                .context("failed to read stdin")?;
+            (data, "stdin".to_string())
+        }
+    };
+
+    if data.is_empty() {
+        bail!("No data to send");
+    }
+
+    // Detect content type
+    let content_type = if let Some(ref t) = type_override {
+        t.to_lowercase()
+    } else if let Some(ref path) = file {
+        detect_from_extension(path)
+    } else {
+        detect_from_content(&data)
+    };
+
+    // Build content JSON
+    let content_json = match content_type.as_str() {
+        "png" => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            format!(r#"{{"type":"Png","data":"{}"}}"#, encoded)
+        }
+        "svg" => {
+            let text = String::from_utf8(data)
+                .context("SVG data is not valid UTF-8")?;
+            let escaped = serde_json::to_string(&text)?;
+            format!(r#"{{"type":"Svg","data":{}}}"#, escaped)
+        }
+        "plotly" => {
+            let text = String::from_utf8(data)
+                .context("Plotly JSON is not valid UTF-8")?;
+            // Validate it's JSON
+            serde_json::from_str::<serde_json::Value>(&text)
+                .context("Plotly data is not valid JSON")?;
+            let escaped = serde_json::to_string(&text)?;
+            format!(r#"{{"type":"Plotly","data":{}}}"#, escaped)
+        }
+        "vega" => {
+            let text = String::from_utf8(data)
+                .context("Vega JSON is not valid UTF-8")?;
+            serde_json::from_str::<serde_json::Value>(&text)
+                .context("Vega data is not valid JSON")?;
+            let escaped = serde_json::to_string(&text)?;
+            format!(r#"{{"type":"Vega","data":{}}}"#, escaped)
+        }
+        "html" => {
+            let text = String::from_utf8(data)
+                .context("HTML data is not valid UTF-8")?;
+            let escaped = serde_json::to_string(&text)?;
+            format!(r#"{{"type":"Html","data":{}}}"#, escaped)
+        }
+        other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html", other),
+    };
+
+    // Build full payload
+    let payload = if let Some(ref token) = state.token {
+        let token_escaped = serde_json::to_string(token)?;
+        format!(r#"{{"token":{},"content":{}}}"#, token_escaped, content_json)
+    } else {
+        format!(r#"{{"content":{}}}"#, content_json)
+    };
+
+    let url = format!("http://{}/api/publish", state.addr);
+    let resp = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_string(&payload)
+        .context("failed to send to server")?;
+
+    let resp_text = resp.into_string()
+        .context("failed to read server response")?;
+    let body: serde_json::Value = serde_json::from_str(&resp_text)
+        .context("failed to parse server response")?;
+
+    if let Some(id) = body.get("id").and_then(|v: &serde_json::Value| v.as_str()) {
+        println!("Sent {} as {} (id: {})", source_name, content_type, id);
+    } else {
+        println!("Sent {} as {}", source_name, content_type);
+    }
+
+    Ok(())
+}
+
+fn detect_from_extension(path: &PathBuf) -> String {
+    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+        Some("png") => "png",
+        Some("svg") => "svg",
+        Some("html" | "htm") => "html",
+        Some("json") => return detect_json_type(&fs::read(path).unwrap_or_default()),
+        _ => "png", // default for unknown extensions
+    }.to_string()
+}
+
+fn detect_from_content(data: &[u8]) -> String {
+    // PNG magic bytes
+    if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return "png".to_string();
+    }
+
+    // Try as UTF-8 text
+    if let Ok(text) = std::str::from_utf8(data) {
+        let trimmed = text.trim_start();
+        if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") && trimmed.contains("<svg") {
+            return "svg".to_string();
+        }
+        if trimmed.starts_with('<') {
+            return "html".to_string();
+        }
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return detect_json_type(data);
+        }
+    }
+
+    "png".to_string() // binary fallback
+}
+
+fn detect_json_type(data: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(data) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
+            // Vega/Vega-Lite specs have $schema
+            if let Some(schema) = val.get("$schema").and_then(|s| s.as_str()) {
+                if schema.contains("vega") {
+                    return "vega".to_string();
+                }
+            }
+            // Plotly has data+layout pattern
+            if val.get("data").is_some() && val.get("layout").is_some() {
+                return "plotly".to_string();
+            }
+            // Vega specs typically have mark, encoding, or layer
+            if val.get("mark").is_some()
+                || val.get("encoding").is_some()
+                || val.get("layer").is_some()
+                || val.get("vconcat").is_some()
+                || val.get("hconcat").is_some()
+            {
+                return "vega".to_string();
+            }
+        }
+    }
+    "vega".to_string() // default JSON → Vega
 }
