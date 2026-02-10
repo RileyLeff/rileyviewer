@@ -325,7 +325,7 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
     let content_type = if let Some(ref t) = type_override {
         t.to_lowercase()
     } else if let Some(ref path) = file {
-        detect_from_extension(path)
+        detect_from_extension(path, &data)
     } else {
         detect_from_content(&data)
     };
@@ -396,12 +396,12 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn detect_from_extension(path: &PathBuf) -> String {
+fn detect_from_extension(path: &PathBuf, data: &[u8]) -> String {
     match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
         Some("png") => "png",
         Some("svg") => "svg",
         Some("html" | "htm") => "html",
-        Some("json") => return detect_json_type(&fs::read(path).unwrap_or_default()),
+        Some("json") => return detect_json_type(data),
         _ => "png", // default for unknown extensions
     }.to_string()
 }
@@ -415,7 +415,7 @@ fn detect_from_content(data: &[u8]) -> String {
     // Try as UTF-8 text
     if let Ok(text) = std::str::from_utf8(data) {
         let trimmed = text.trim_start();
-        if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") && trimmed.contains("<svg") {
+        if trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && trimmed.contains("<svg")) {
             return "svg".to_string();
         }
         if trimmed.starts_with('<') {
