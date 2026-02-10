@@ -321,72 +321,48 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
         bail!("No data to send");
     }
 
+    let filename = file.as_ref().map(|p| p.display().to_string());
+    let (content_type, id) = send_data_to_server(
+        &data,
+        filename.as_deref(),
+        type_override.as_deref(),
+        &state.addr,
+        state.token.as_deref(),
+    )?;
+
+    println!("Sent {} as {} (id: {})", source_name, content_type, id);
+    Ok(())
+}
+
+/// Core send logic: detect type, build payload, POST to server. Returns (content_type, plot_id).
+fn send_data_to_server(
+    data: &[u8],
+    filename: Option<&str>,
+    type_override: Option<&str>,
+    addr: &str,
+    token: Option<&str>,
+) -> Result<(String, String)> {
     // Detect content type
-    let content_type = if let Some(ref t) = type_override {
+    let content_type = if let Some(t) = type_override {
         t.to_lowercase()
-    } else if let Some(ref path) = file {
-        detect_from_extension(path, &data)
+    } else if let Some(name) = filename {
+        detect_from_extension(&PathBuf::from(name), data)
     } else {
-        detect_from_content(&data)
+        detect_from_content(data)
     };
 
     // Build content JSON
-    let content_json = match content_type.as_str() {
-        "png" => {
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-            format!(r#"{{"type":"Png","data":"{}"}}"#, encoded)
-        }
-        "svg" => {
-            let text = String::from_utf8(data)
-                .context("SVG data is not valid UTF-8")?;
-            let escaped = serde_json::to_string(&text)?;
-            format!(r#"{{"type":"Svg","data":{}}}"#, escaped)
-        }
-        "plotly" => {
-            let text = String::from_utf8(data)
-                .context("Plotly JSON is not valid UTF-8")?;
-            // Validate it's JSON
-            serde_json::from_str::<serde_json::Value>(&text)
-                .context("Plotly data is not valid JSON")?;
-            let escaped = serde_json::to_string(&text)?;
-            format!(r#"{{"type":"Plotly","data":{}}}"#, escaped)
-        }
-        "vega" => {
-            let text = String::from_utf8(data)
-                .context("Vega JSON is not valid UTF-8")?;
-            serde_json::from_str::<serde_json::Value>(&text)
-                .context("Vega data is not valid JSON")?;
-            let escaped = serde_json::to_string(&text)?;
-            format!(r#"{{"type":"Vega","data":{}}}"#, escaped)
-        }
-        "html" => {
-            let text = String::from_utf8(data)
-                .context("HTML data is not valid UTF-8")?;
-            let escaped = serde_json::to_string(&text)?;
-            format!(r#"{{"type":"Html","data":{}}}"#, escaped)
-        }
-        "csv" => {
-            let text = String::from_utf8(data)
-                .context("CSV data is not valid UTF-8")?;
-            let escaped = serde_json::to_string(&text)?;
-            format!(r#"{{"type":"Csv","data":{}}}"#, escaped)
-        }
-        "arrow" => {
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-            format!(r#"{{"type":"ArrowIpc","data":"{}"}}"#, encoded)
-        }
-        other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html, csv, arrow", other),
-    };
+    let content_json = build_content_json(&content_type, data)?;
 
     // Build full payload
-    let payload = if let Some(ref token) = state.token {
+    let payload = if let Some(token) = token {
         let token_escaped = serde_json::to_string(token)?;
         format!(r#"{{"token":{},"content":{}}}"#, token_escaped, content_json)
     } else {
         format!(r#"{{"content":{}}}"#, content_json)
     };
 
-    let url = format!("http://{}/api/publish", state.addr);
+    let url = format!("http://{}/api/publish", addr);
     let resp = ureq::post(&url)
         .timeout(std::time::Duration::from_secs(30))
         .set("Content-Type", "application/json")
@@ -398,13 +374,60 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
     let body: serde_json::Value = serde_json::from_str(&resp_text)
         .context("failed to parse server response")?;
 
-    if let Some(id) = body.get("id").and_then(|v: &serde_json::Value| v.as_str()) {
-        println!("Sent {} as {} (id: {})", source_name, content_type, id);
-    } else {
-        println!("Sent {} as {}", source_name, content_type);
-    }
+    let id = body.get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
 
-    Ok(())
+    Ok((content_type, id))
+}
+
+fn build_content_json(content_type: &str, data: &[u8]) -> Result<String> {
+    match content_type {
+        "png" => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+            Ok(format!(r#"{{"type":"Png","data":"{}"}}"#, encoded))
+        }
+        "svg" => {
+            let text = String::from_utf8(data.to_vec())
+                .context("SVG data is not valid UTF-8")?;
+            let escaped = serde_json::to_string(&text)?;
+            Ok(format!(r#"{{"type":"Svg","data":{}}}"#, escaped))
+        }
+        "plotly" => {
+            let text = String::from_utf8(data.to_vec())
+                .context("Plotly JSON is not valid UTF-8")?;
+            serde_json::from_str::<serde_json::Value>(&text)
+                .context("Plotly data is not valid JSON")?;
+            let escaped = serde_json::to_string(&text)?;
+            Ok(format!(r#"{{"type":"Plotly","data":{}}}"#, escaped))
+        }
+        "vega" => {
+            let text = String::from_utf8(data.to_vec())
+                .context("Vega JSON is not valid UTF-8")?;
+            serde_json::from_str::<serde_json::Value>(&text)
+                .context("Vega data is not valid JSON")?;
+            let escaped = serde_json::to_string(&text)?;
+            Ok(format!(r#"{{"type":"Vega","data":{}}}"#, escaped))
+        }
+        "html" => {
+            let text = String::from_utf8(data.to_vec())
+                .context("HTML data is not valid UTF-8")?;
+            let escaped = serde_json::to_string(&text)?;
+            Ok(format!(r#"{{"type":"Html","data":{}}}"#, escaped))
+        }
+        "csv" => {
+            let text = String::from_utf8(data.to_vec())
+                .context("CSV data is not valid UTF-8")?;
+            let escaped = serde_json::to_string(&text)?;
+            Ok(format!(r#"{{"type":"Csv","data":{}}}"#, escaped))
+        }
+        "arrow" => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+            Ok(format!(r#"{{"type":"ArrowIpc","data":"{}"}}"#, encoded))
+        }
+        other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html, csv, arrow", other),
+    }
 }
 
 fn detect_from_extension(path: &PathBuf, data: &[u8]) -> String {
