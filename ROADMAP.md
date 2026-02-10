@@ -4,30 +4,38 @@ Ideas and future directions. Nothing here is promised or scheduled.
 
 ## v0.1 (current)
 
-- Python client + bundled Rust server in a single `uv add rileyviewer`
-- matplotlib, seaborn, pandas, Plotly, Altair, animations, HTML
+- Standalone Rust server (`brew install`, `cargo install`, or GitHub release binaries)
+- Pure Python HTTP client (`uv add rileyviewer`) — connects to running server, no binary bundled
+- matplotlib, seaborn, pandas plots, Plotly, Altair, animations, HTML
 - Browser UI with theme toggle, thumbnails, settings
-
-## CLI pipe
-
-Send any file to the viewer from the command line:
-
-```bash
-cat plot.svg | rileyviewer send
-rileyviewer send figure.png
-rileyviewer send --type plotly chart.json
-```
-
-Turns rileyviewer into a universal plot sink. Any tool that writes to stdout or disk — gnuplot, R scripts, ImageMagick, ffmpeg frames — can pipe directly without a client library. Combined with a skill/docs file for LLMs, this covers the "AI agent sends plots" use case without needing a dedicated MCP server.
+- CLI pipe (`rileyviewer send`) — pipe files or stdin directly, auto-detects PNG/SVG/Plotly/Vega/HTML
+- Keyboard shortcuts — arrow keys, Home/End, copy, reconnect, Escape
 
 ## Data tables
 
-`v.show(df)` renders a searchable, sortable, filterable table in the browser. Expands rileyviewer from "plot viewer" to "data viewer."
+Render tabular data in the browser. Expands rileyviewer from "plot viewer" to "data viewer."
 
-- **Python** — `v.show(df)` for pandas/polars DataFrames. Native table renderer, not just `df.to_html()`.
-- **CLI** — `rileyviewer send data.csv` and `rileyviewer send data.parquet`. Especially useful for Parquet which is otherwise hard to quickly inspect.
-- **Browser UX** — column sorting, type-aware filtering, pagination, column resizing. Sparklines in numeric columns would be cool.
-- **Large data** — stream rows on demand rather than sending everything upfront. Server-side pagination.
+Wire format is per-format, not per-library — like how we support PNG/SVG/Plotly JSON rather than matplotlib/seaborn/ggplot2:
+
+- **Arrow IPC** — binary columnar format. Compact, typed, fast. Every major DataFrame library speaks Arrow natively (pandas, polars, R arrow, Julia Arrow.jl). The `apache-arrow` JS library reads it in the browser.
+- **CSV** — universal text fallback. Lossy on types but simple.
+
+Client adapters are thin serializers:
+- **Python** — `v.show(df)` detects pandas/polars → Arrow IPC bytes → POST
+- **CLI** — `rileyviewer send data.csv`, `rileyviewer send data.parquet`
+- **Browser** — virtual-scrolled table with column sorting, type-aware formatting, pagination
+
+For large datasets (millions of rows), Arrow IPC + virtual scrolling handles the browser side. Server-side pagination (rows on demand) is the next step if needed.
+
+## Export
+
+Download the current plot with control over format, size, and resolution.
+
+- **Format picker** — PNG, SVG, PDF. For Plotly/Vega, also offer the underlying JSON. For tables, CSV/Parquet.
+- **Resize** — set custom width/height in pixels before export, with a live preview.
+- **DPI control** — for raster formats, choose resolution (72 for screen, 300 for print, 600 for publication).
+- **Batch export** — select multiple thumbnails (or a whole collection), export as a zip or multi-page PDF.
+- **Copy to clipboard** — one-click copy as image, useful for pasting into Slack/docs. (Basic version already implemented via `c` shortcut.)
 
 ## File watcher
 
@@ -35,7 +43,7 @@ Turns rileyviewer into a universal plot sink. Any tool that writes to stdout or 
 rileyviewer watch ./figures/
 ```
 
-Auto-ingest new or modified image/SVG/HTML files from a directory. Zero integration effort — just point it at wherever your scripts dump output. Easy win.
+Auto-ingest new or modified image/SVG/HTML files from a directory. Zero integration effort — just point it at wherever your scripts dump output.
 
 ## Metadata, tags & collections
 
@@ -55,16 +63,6 @@ Fullscreen slideshow through your plots. Arrow keys to navigate, escape to exit.
 - Presents the current filter/collection, not necessarily all plots.
 - Pairs with collections: make a "results" collection, enter presentation mode, walk through it in a lab meeting.
 - Optional auto-advance timer for unattended displays.
-
-## Export
-
-Download the current plot with control over format, size, and resolution.
-
-- **Format picker** — PNG, SVG, PDF. For Plotly/Vega, also offer the underlying JSON.
-- **Resize** — set custom width/height in pixels before export, with a live preview.
-- **DPI control** — for raster formats, choose resolution (72 for screen, 300 for print, 600 for publication).
-- **Batch export** — select multiple thumbnails (or a whole collection), export as a zip or multi-page PDF.
-- **Copy to clipboard** — one-click copy as image, useful for pasting into Slack/docs.
 
 ## Session snapshots
 
@@ -88,15 +86,6 @@ Client-side responsibility — each client library captures source info using la
 Compiled languages (Rust, Go) can skip this — not worth the complexity for file/line without source text.
 
 The protocol is just a metadata field: `{"source": {"file": "experiment.py", "line": 42, "code": "..."}}`. Opt-in — clients that don't send it just don't have a source tab.
-
-## Keyboard shortcuts
-
-- Arrow keys to navigate plots
-- Number keys to jump
-- `Cmd+C` to copy current plot
-- `/` to search
-- `F` for fullscreen / presentation mode
-- `Esc` to exit overlays
 
 ## Notifications
 
@@ -128,23 +117,14 @@ Requires: a hosted component (relay server or tunneling), session management, id
 
 ## Polyglot clients
 
-The server is already language-agnostic — it accepts plots via HTTP POST as PNG, SVG, Plotly JSON, Vega/Vega-Lite JSON, or HTML. Any language with an HTTP client can send plots. Thin client libraries could be written for:
+The server is language-agnostic — it accepts plots via HTTP POST as PNG, SVG, Plotly JSON, Vega/Vega-Lite JSON, or HTML. Any language with an HTTP client can send plots. Thin client libraries could be written for:
 
 - **R** — wrap `ggsave()` → SVG → POST. Would let you interleave ggplot2 and seaborn in the same viewer.
 - **JavaScript/TypeScript** — `fetch()` wrapper. Useful for Node scripts doing data processing.
 - **Rust** — `ureq` or `reqwest` POST. Niche but fun for visualizing simulations.
 - **Julia** — similar story, HTTP POST with Plots.jl/Makie.jl output.
 
-### Requires: standalone server distribution
-
-Right now the server binary is bundled inside the Python wheel. To support non-Python clients, the server needs to be installable on its own:
-
-- **Homebrew tap** — `brew install rileyleff/tap/rileyviewer`
-- **Cargo** — `cargo install rileyviewer` (publish `rv_cli` to crates.io, with `embed-assets` as default feature)
-- **GitHub releases** — already produces platform binaries, just needs visibility
-- **npm** — optional, for JS ecosystem discovery
-
-The Python package would continue bundling the binary for zero-config setup. Standalone installs would just be an alternative path to the same server.
+The server is already installable standalone via Homebrew, Cargo, or GitHub releases.
 
 ## Other ideas
 
