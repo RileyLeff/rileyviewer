@@ -100,90 +100,22 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Prepare binary (Unix)
+      - name: Upload CLI binary (Unix)
         if: runner.os != 'Windows'
-        run: |
-          mkdir -p python/bin
-          cp target/${{ matrix.target }}/release/rileyviewer python/bin/
-          chmod +x python/bin/rileyviewer
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.platform }}
+          path: target/${{ matrix.target }}/release/rileyviewer
 
-      - name: Prepare binary (Windows)
+      - name: Upload CLI binary (Windows)
         if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          mkdir -p python/bin
-          cp target/${{ matrix.target }}/release/rileyviewer.exe python/bin/rileyviewer.exe
-          cp target/${{ matrix.target }}/release/rileyviewer.exe python/bin/rileyviewer
-
-      - name: Upload CLI binary
         uses: actions/upload-artifact@v4
         with:
           name: cli-${{ matrix.platform }}
-          path: python/bin/
+          path: target/${{ matrix.target }}/release/rileyviewer.exe
 
-  build-wheels:
-    name: Build wheel (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
-    needs: build-cli
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            platform: macosx_11_0_arm64
-          - os: macos-13
-            platform: macosx_10_12_x86_64
-          - os: ubuntu-latest
-            platform: manylinux_2_17_x86_64
-          - os: ubuntu-latest
-            platform: manylinux_2_17_aarch64
-          - os: windows-latest
-            platform: win_amd64
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-
-      - name: Download CLI binary
-        uses: actions/download-artifact@v4
-        with:
-          name: cli-${{ matrix.platform }}
-          path: python/bin/
-
-      - name: Set executable permission (Unix)
-        if: runner.os != 'Windows'
-        run: chmod +x python/bin/rileyviewer
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install build tools
-        run: pip install build hatchling wheel
-
-      - name: Build wheel
-        working-directory: python
-        run: python -m build --wheel
-
-      - name: Re-tag wheel with platform tag
-        working-directory: python/dist
-        shell: bash
-        run: |
-          # Use `wheel tags` to update both filename AND internal WHEEL metadata
-          for f in *.whl; do
-            python -m wheel tags --platform-tag=${{ matrix.platform }} "$f" --remove
-          done
-
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheel-${{ matrix.platform }}
-          path: python/dist/*.whl
-
-  build-sdist:
-    name: Build source distribution
+  build-python:
+    name: Build Python package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -198,33 +130,26 @@ jobs:
       - name: Install build tools
         run: pip install build
 
-      - name: Build sdist
+      - name: Build wheel and sdist
         working-directory: python
-        run: python -m build --sdist
+        run: python -m build
 
-      - name: Upload sdist
+      - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:
-          name: sdist
-          path: python/dist/*.tar.gz
+          name: python-dist
+          path: python/dist/*
 
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [build-wheels, build-sdist]
+    needs: build-python
     environment: pypi
     steps:
-      - name: Download all wheels
+      - name: Download Python distributions
         uses: actions/download-artifact@v4
         with:
-          pattern: wheel-*
-          path: dist/
-          merge-multiple: true
-
-      - name: Download sdist
-        uses: actions/download-artifact@v4
-        with:
-          name: sdist
+          name: python-dist
           path: dist/
 
       - name: List artifacts

@@ -6,11 +6,26 @@ Inspired by [httpgd](https://nx10.github.io/httpgd/) for R. Built because `plt.s
 
 ## Install
 
+**Server** (install once):
+
+```bash
+# macOS
+brew install rileyleff/tap/rileyviewer
+
+# or from source
+cargo install rileyviewer
+
+# or grab a binary from GitHub Releases
+# https://github.com/rileyleff/rileyviewer/releases
+```
+
+**Python client:**
+
 ```
 uv add rileyviewer
 ```
 
-This installs both the Python library and the server binary. Requires Python 3.10+.
+Requires Python 3.10+. The Python package is a pure HTTP client — it connects to the server but doesn't bundle it.
 
 ## Quick start
 
@@ -26,7 +41,7 @@ This opens a browser tab that stays open across script runs. Then send plots fro
 from rileyviewer import Viewer
 import matplotlib.pyplot as plt
 
-v = Viewer(open_browser=False)  # connects to running server
+v = Viewer()  # connects to running server
 
 with v.capture() as ctx:
     plt.plot([1, 2, 3], [1, 4, 9])
@@ -39,12 +54,7 @@ with v.capture() as ctx:
 # figures closed automatically
 ```
 
-You can also do everything from Python — `Viewer()` will start the server and open the browser for you if one isn't already running:
-
-```python
-v = Viewer()  # starts server + opens browser
-v.show(plt.gcf())
-```
+If the server isn't running, `Viewer()` raises a helpful error with install instructions.
 
 ## Supported frameworks
 
@@ -76,7 +86,7 @@ v.send_html(html_string)
 Python  ──HTTP POST──>  Rust server  ──WebSocket──>  Browser (Svelte SPA)
 ```
 
-The first `Viewer()` call spawns a local Rust server as a background process. The server serves a single-page app and pushes plots to connected browsers via WebSocket. Subsequent `Viewer()` calls on the same port reuse the existing server.
+The server runs as a standalone process. It serves a single-page app and pushes plots to connected browsers via WebSocket. The Python client sends plots via HTTP — no WebSocket or subprocess management needed.
 
 The browser tab persists across script runs. Plots accumulate in a thumbnail strip — click any to view it.
 
@@ -85,24 +95,20 @@ The browser tab persists across script runs. Plots accumulate in a thumbnail str
 Multiple Python processes can send to the same server:
 
 ```python
-# Process 1 — starts the server
-v = Viewer(port=9877)
-
-# Process 2 — connects to existing server
-v = Viewer(port=9877, open_browser=False)
+# Both connect to the same running server
+v1 = Viewer(port=9877)
+v2 = Viewer(port=9877)
 ```
 
-The server stores a token in `~/Library/Application Support/rileyviewer/server.json` (macOS) so subsequent clients authenticate automatically.
+The server stores a token in `~/Library/Application Support/rileyviewer/server.json` (macOS) so clients authenticate automatically.
 
 ## Configuration
 
 ```python
 Viewer(
     port=7878,              # default port
-    host="127.0.0.1",      # bind address
-    open_browser=True,      # open browser on first run
+    host="127.0.0.1",      # server address
     default_format="svg",   # "svg" or "png" for matplotlib
-    history_limit=200,      # max plots kept server-side
 )
 ```
 
@@ -110,9 +116,9 @@ The browser UI has a settings menu for theme (light/dark/auto), background style
 
 ## Architecture
 
-- **`python/`** — Python package (`uv add rileyviewer`)
-- **`crates/`** — Rust server (Axum), CLI, core types
-- **`web/`** — SvelteKit frontend with Tailwind, builds to static assets embedded in the binary
+- **`crates/`** — Rust server (Axum) and CLI, installed standalone
+- **`python/`** — Pure Python HTTP client (`uv add rileyviewer`)
+- **`web/`** — SvelteKit frontend with Tailwind, builds to static assets embedded in the server binary
 
 ## Development
 

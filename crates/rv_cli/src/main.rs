@@ -220,29 +220,33 @@ fn stop() -> Result<()> {
     match read_state() {
         Some(state) => {
             if check_server_running(&state.addr) {
-                // Send kill signal to the process
-                #[cfg(unix)]
+                let url = format!("http://{}/api/shutdown", state.addr);
+                let body = if let Some(ref token) = state.token {
+                    format!(r#"{{"token":"{}"}}"#, token)
+                } else {
+                    "{}".to_string()
+                };
+
+                match ureq::post(&url)
+                    .set("Content-Type", "application/json")
+                    .send_string(&body)
                 {
-                    use nix::sys::signal::{kill, Signal};
-                    use nix::unistd::Pid;
-                    let pid = Pid::from_raw(state.pid as i32);
-                    if kill(pid, Signal::SIGTERM).is_ok() {
-                        println!("Sent stop signal to server (PID {})", state.pid);
-                        // Wait a moment and verify
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        if !check_server_running(&state.addr) {
-                            remove_state();
-                            println!("Server stopped");
-                        } else {
-                            println!("Server still running, may need manual kill");
+                    Ok(_) => {
+                        println!("Shutdown signal sent");
+                        // Wait for server to actually stop
+                        for _ in 0..50 {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if !check_server_running(&state.addr) {
+                                remove_state();
+                                println!("Server stopped");
+                                return Ok(());
+                            }
                         }
-                    } else {
-                        println!("Failed to send signal to PID {}", state.pid);
+                        println!("Server may still be shutting down");
                     }
-                }
-                #[cfg(windows)]
-                {
-                    println!("Stop not implemented on Windows yet. Kill PID {} manually.", state.pid);
+                    Err(e) => {
+                        println!("Failed to send shutdown request: {}", e);
+                    }
                 }
             } else {
                 println!("Server not running");

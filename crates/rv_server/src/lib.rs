@@ -3,6 +3,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Shared shutdown trigger. The oneshot sender is taken once to initiate graceful shutdown.
+type ShutdownTx = Arc<Mutex<Option<oneshot::Sender<()>>>>;
+
 use anyhow::Context;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -65,7 +68,7 @@ impl PlotState {
 
 struct InnerHandle {
     state: PlotState,
-    shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
+    shutdown_tx: ShutdownTx,
     task: Mutex<Option<JoinHandle<anyhow::Result<()>>>>,
     addr: SocketAddr,
     token: Option<String>,
@@ -90,17 +93,7 @@ impl ServerHandle {
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        // Use unwrap_or_else to handle poisoned mutex gracefully - if another thread
-        // panicked while holding the lock, we still want to attempt shutdown
-        if let Some(tx) = self
-            .inner
-            .shutdown_tx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            let _ = tx.send(());
-        }
+        trigger_shutdown(&self.inner.shutdown_tx);
         if let Some(task) = self
             .inner
             .task
@@ -151,14 +144,15 @@ pub async fn start_server_with(config: ServerConfig) -> anyhow::Result<ServerHan
         .or_else(|| Some(Uuid::new_v4().simple().to_string()));
 
     let state = PlotState::new(config.history_limit);
-    let router = build_router(state.clone(), token.clone(), config.dist_dir.clone());
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let shutdown = Arc::new(Mutex::new(Some(shutdown_tx)));
+    let router = build_router(state.clone(), token.clone(), shutdown.clone(), config.dist_dir.clone());
     let bind_str = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&bind_str)
         .await
         .with_context(|| format!("failed binding to {bind_str}"))?;
     let addr = listener.local_addr().context("failed to get local address")?;
 
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let task = tokio::spawn(async move {
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
@@ -172,7 +166,7 @@ pub async fn start_server_with(config: ServerConfig) -> anyhow::Result<ServerHan
     Ok(ServerHandle {
         inner: Arc::new(InnerHandle {
             state,
-            shutdown_tx: Mutex::new(Some(shutdown_tx)),
+            shutdown_tx: shutdown,
             task: Mutex::new(Some(task)),
             addr,
             token,
@@ -180,7 +174,7 @@ pub async fn start_server_with(config: ServerConfig) -> anyhow::Result<ServerHan
     })
 }
 
-fn build_router(state: PlotState, token: Option<String>, dist_dir: Option<String>) -> Router {
+fn build_router(state: PlotState, token: Option<String>, shutdown: ShutdownTx, dist_dir: Option<String>) -> Router {
     #[cfg(feature = "embed-assets")]
     let spa = embedded_assets_service();
 
@@ -197,8 +191,9 @@ fn build_router(state: PlotState, token: Option<String>, dist_dir: Option<String
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
         .route("/api/publish", post(publish_handler))
+        .route("/api/shutdown", post(shutdown_handler))
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for animations
-        .with_state((state, token))
+        .with_state((state, token, shutdown))
         .merge(spa)
 }
 
@@ -212,7 +207,7 @@ struct WsQuery {
 }
 
 async fn ws_handler(
-    State((state, token)): State<(PlotState, Option<String>)>,
+    State((state, token, _shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -274,6 +269,35 @@ async fn send_history(
     Ok(())
 }
 
+/// Take the oneshot sender and fire it to trigger graceful shutdown.
+fn trigger_shutdown(shutdown: &ShutdownTx) {
+    if let Some(tx) = shutdown
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+    {
+        let _ = tx.send(());
+    }
+}
+
+#[derive(Deserialize)]
+struct ShutdownRequest {
+    token: Option<String>,
+}
+
+async fn shutdown_handler(
+    State((_state, expected_token, shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
+    Json(req): Json<ShutdownRequest>,
+) -> Response {
+    if !token_valid(&expected_token, req.token.as_deref()) {
+        warn!("Shutdown request rejected: invalid or missing token");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    debug!("Shutdown requested via API");
+    trigger_shutdown(&shutdown);
+    StatusCode::OK.into_response()
+}
+
 fn token_valid(expected: &Option<String>, provided: Option<&str>) -> bool {
     match (expected, provided) {
         (None, _) => true,
@@ -294,7 +318,7 @@ struct PublishResponse {
 }
 
 async fn publish_handler(
-    State((state, expected_token)): State<(PlotState, Option<String>)>,
+    State((state, expected_token, _shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
     Json(req): Json<PublishRequest>,
 ) -> Response {
     if !token_valid(&expected_token, req.token.as_deref()) {

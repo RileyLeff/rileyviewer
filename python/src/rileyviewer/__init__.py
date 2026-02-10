@@ -1,9 +1,8 @@
 from .viewer import MatplotlibContext, Viewer
 from .exceptions import (
-    CLINotFoundError,
     RileyViewerError,
     ServerConnectionError,
-    ServerStartError,
+    ServerNotRunningError,
     SerializationError,
     UnsupportedPlotTypeError,
 )
@@ -11,10 +10,9 @@ from .exceptions import (
 __all__ = [
     "Viewer",
     "MatplotlibContext",
-    "CLINotFoundError",
     "RileyViewerError",
     "ServerConnectionError",
-    "ServerStartError",
+    "ServerNotRunningError",
     "SerializationError",
     "UnsupportedPlotTypeError",
 ]

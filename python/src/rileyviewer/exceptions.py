@@ -15,19 +15,18 @@ class ServerConnectionError(RileyViewerError):
     pass
 
 
-class ServerStartError(RileyViewerError):
-    """Failed to start the rileyviewer server."""
+class ServerNotRunningError(RileyViewerError):
+    """The rileyviewer server is not running on the specified host:port."""
 
-    pass
-
-
-class CLINotFoundError(RileyViewerError):
-    """The rileyviewer CLI binary was not found."""
-
-    def __init__(self) -> None:
+    def __init__(self, host: str, port: int) -> None:
         super().__init__(
-            "rileyviewer CLI binary not found. Install with:\n"
-            "  uv add rileyviewer"
+            f"RileyViewer server is not running on {host}:{port}.\n\n"
+            "Start the server with:\n"
+            "  rileyviewer serve\n\n"
+            "Install the server:\n"
+            "  macOS:   brew install rileyleff/tap/rileyviewer\n"
+            "  cargo:   cargo install rileyviewer\n"
+            "  binary:  https://github.com/rileyleff/rileyviewer/releases"
         )
 
 

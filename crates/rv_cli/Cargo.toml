@@ -23,6 +23,3 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 ureq = "2.9"
 uuid = { workspace = true }
 webbrowser = "1.0"
-
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["signal"] }

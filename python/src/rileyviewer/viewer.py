@@ -3,17 +3,16 @@ from __future__ import annotations
 import base64
 import json
 import os
-import subprocess
 import sys
 import time
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from . import adapters
 from .adapters import MatplotlibFormat
-from .exceptions import CLINotFoundError, ServerConnectionError, ServerStartError
+from .exceptions import ServerConnectionError, ServerNotRunningError
 
 DEFAULT_PORT = 7878
 DEFAULT_HOST = "127.0.0.1"
@@ -73,150 +72,40 @@ def _check_server_running(host: str, port: int) -> bool:
         return False
 
 
-def _find_cli_binary() -> Optional[str]:
-    """Find the rileyviewer CLI binary."""
-    import shutil
-    import sys
-
-    names = ["rileyviewer.exe", "rileyviewer"] if sys.platform == "win32" else ["rileyviewer"]
-
-    # Check if it's in PATH (shutil.which handles PATHEXT on Windows)
-    cli = shutil.which("rileyviewer")
-    if cli:
-        return cli
-
-    # Check common cargo install locations
-    for name in names:
-        cargo_bin = Path.home() / ".cargo" / "bin" / name
-        if cargo_bin.exists():
-            return str(cargo_bin)
-
-    # Check if we're in development mode - look for target/debug or target/release
-    # First check relative to cwd (for uv run scripts where package is in cache)
-    cwd = Path.cwd()
-    for profile in ["release", "debug"]:
-        for name in names:
-            dev_binary = cwd / "target" / profile / name
-            if dev_binary.exists():
-                return str(dev_binary)
-
-    # Also check relative to the package location (for editable installs)
-    # __file__ = python/src/rileyviewer/viewer.py -> 4x .parent = repo root
-    pkg_dir = Path(__file__).parent.parent.parent.parent
-    for profile in ["release", "debug"]:
-        for name in names:
-            dev_binary = pkg_dir / "target" / profile / name
-            if dev_binary.exists():
-                return str(dev_binary)
-
-    return None
-
-
-def _spawn_server(
-    host: str,
-    port: int,
-    token: Optional[str],
-    dist_dir: Optional[str] = None,
-    open_browser: bool = True,
-    history_limit: Optional[int] = None,
-) -> bool:
-    """Spawn a detached server process. Returns True if successful."""
-    cli = _find_cli_binary()
-    if not cli:
-        return False
-
-    cmd = [cli, "serve", "--host", host, "--port", str(port)]
-    cmd.extend(["--open-browser", "true" if open_browser else "false"])
-    if token:
-        cmd.extend(["--token", token])
-    if dist_dir:
-        cmd.extend(["--dist-dir", dist_dir])
-    if history_limit is not None:
-        cmd.extend(["--history-limit", str(history_limit)])
-
-    # Spawn detached process
-    if sys.platform == "win32":
-        # Windows: use DETACHED_PROCESS flag
-        kwargs = {
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
-            "stdin": subprocess.DEVNULL,
-            "creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        }
-        try:
-            subprocess.Popen(cmd, **kwargs)
-            return True
-        except OSError:
-            return False
-    else:
-        # Unix: use subprocess.Popen with start_new_session to fully detach
-        try:
-            subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            return True
-        except OSError:
-            return False
-
-
 class Viewer:
-    """Python-facing viewer that connects to the RileyViewer server."""
+    """Python client that connects to a running RileyViewer server.
+
+    The server must be started separately with ``rileyviewer serve``.
+    Raises :class:`ServerNotRunningError` with install instructions
+    if the server is not reachable.
+
+    Args:
+        host: Server host (default: 127.0.0.1).
+        port: Server port (default: 7878).
+        token: Auth token. Read from the server state file if not provided.
+        default_format: Default matplotlib output format ("svg" or "png").
+    """
 
     def __init__(
         self,
         host: Optional[str] = None,
         port: Optional[int] = None,
         token: Optional[str] = None,
-        open_browser: bool = True,
-        dist_dir: Optional[str] = None,
-        history_limit: Optional[int] = None,
         default_format: MatplotlibFormat = "svg",
     ) -> None:
         self._host = host or DEFAULT_HOST
         self._port = port if port is not None else DEFAULT_PORT
         self._token = token
-        self._open_browser = open_browser
-        self._dist_dir = dist_dir
-        self._history_limit = history_limit
         self._default_format: MatplotlibFormat = default_format
 
-        # Check if server already running
-        if _check_server_running(self._host, self._port):
-            # Server running - read token from state file if we don't have one
-            if not self._token:
-                state = _read_server_state()
-                if state and _addrs_match(state.get("addr", ""), f"{self._host}:{self._port}", self._port):
-                    self._token = state.get("token")
-        else:
-            # Need to start server - CLI will open browser if requested
-            if not _spawn_server(self._host, self._port, self._token, self._dist_dir, self._open_browser, self._history_limit):
-                raise CLINotFoundError()
+        if not _check_server_running(self._host, self._port):
+            raise ServerNotRunningError(self._host, self._port)
 
-            # Wait for server to start (state file is written before server binds,
-            # so by the time health check passes, state file is guaranteed to exist)
-            for _ in range(50):  # 5 seconds max
-                time.sleep(0.1)
-                if _check_server_running(self._host, self._port):
-                    break
-            else:
-                raise ServerStartError(
-                    f"Server failed to start on {self._host}:{self._port} within 5 seconds. "
-                    "Check that the rileyviewer CLI is installed and working."
-                )
-
-            # Read token from state file. The state file is written after bind,
-            # but there's a small race where health can respond before the file
-            # is flushed to disk, so retry a few times.
-            for _ in range(20):  # 2 seconds max
-                state = _read_server_state()
-                if state and _addrs_match(state.get("addr", ""), f"{self._host}:{self._port}", self._port):
-                    self._token = state.get("token")
-                    break
-                time.sleep(0.1)
+        # Read token from state file if not explicitly provided
+        if not self._token:
+            state = _read_server_state()
+            if state and _addrs_match(state.get("addr", ""), f"{self._host}:{self._port}", self._port):
+                self._token = state.get("token")
 
     @property
     def addr(self) -> str:
@@ -320,10 +209,6 @@ class Viewer:
 
     def capture(self) -> "MatplotlibContext":
         return MatplotlibContext(self)
-
-    def shutdown(self) -> None:
-        """Shutdown is now a no-op for detached servers. Use `rileyviewer stop` CLI."""
-        pass
 
 
 class MatplotlibContext:
