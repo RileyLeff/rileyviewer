@@ -315,6 +315,89 @@
 		}
 	}
 
+	function scrollActiveIntoView() {
+		tick().then(() => {
+			const btn = historyEl?.querySelector('[data-active="true"]') as HTMLElement | null;
+			btn?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		});
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		const tag = (e.target as HTMLElement)?.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
+
+		switch (e.key) {
+			case 'ArrowLeft':
+			case 'ArrowUp': {
+				e.preventDefault();
+				const idx = plots.findIndex((p) => p.id === activeId);
+				if (idx > 0) {
+					activeId = plots[idx - 1].id;
+					scrollActiveIntoView();
+				}
+				break;
+			}
+			case 'ArrowRight':
+			case 'ArrowDown': {
+				e.preventDefault();
+				const idx = plots.findIndex((p) => p.id === activeId);
+				if (idx >= 0 && idx < plots.length - 1) {
+					activeId = plots[idx + 1].id;
+					scrollActiveIntoView();
+				}
+				break;
+			}
+			case 'Home': {
+				e.preventDefault();
+				if (plots.length > 0) {
+					activeId = plots[0].id;
+					scrollActiveIntoView();
+				}
+				break;
+			}
+			case 'End': {
+				e.preventDefault();
+				if (plots.length > 0) {
+					activeId = plots.at(-1)!.id;
+					scrollActiveIntoView();
+				}
+				break;
+			}
+			case 'Escape':
+				if (error) error = null;
+				break;
+			case 'r':
+				if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+					connect();
+				}
+				break;
+			case 'c':
+				if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+					copyCurrentPlot();
+				}
+				break;
+		}
+	}
+
+	async function copyCurrentPlot() {
+		if (!current) return;
+		try {
+			if (current.content.type === 'Png') {
+				const resp = await fetch(`data:image/png;base64,${current.content.data}`);
+				const blob = await resp.blob();
+				await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+			} else if (current.content.type === 'Svg') {
+				await navigator.clipboard.writeText(current.content.data);
+			} else if (current.content.type === 'Plotly' || current.content.type === 'Vega') {
+				await navigator.clipboard.writeText(current.content.data);
+			} else if (current.content.type === 'Html') {
+				await navigator.clipboard.writeText(current.content.data);
+			}
+		} catch (e) {
+			console.warn('Copy to clipboard failed:', e);
+		}
+	}
+
 	async function renderVega(content: Extract<PlotContent, { type: 'Vega' }>) {
 		if (!vegaEl) return;
 		const gen = ++renderGeneration;
@@ -370,6 +453,7 @@
 						? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)]'
 						: 'border-[var(--color-border)] hover:border-[var(--color-text-faint)]'
 				}`}
+				data-active={activeId === plot.id ? 'true' : undefined}
 				onclick={() => (activeId = plot.id)}
 			>
 				<div class="w-20 h-14 bg-[var(--color-bg-canvas)] flex items-center justify-center overflow-hidden">
@@ -388,6 +472,8 @@
 		{/each}
 	{/if}
 {/snippet}
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)]">
 	<header class="flex-none flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2">

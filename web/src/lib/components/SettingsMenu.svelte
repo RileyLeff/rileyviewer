@@ -40,7 +40,10 @@
 	}
 </script>
 
-<svelte:window onclick={open ? handleClickOutside : undefined} />
+<svelte:window
+	onclick={open ? handleClickOutside : undefined}
+	onkeydown={open ? (e) => { if (e.key === 'Escape') open = false; } : undefined}
+/>
 
 <div class="relative settings-menu">
 	<button
