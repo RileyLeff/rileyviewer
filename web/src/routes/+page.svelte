@@ -2,6 +2,10 @@
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { browser } from '$app/environment';
+	import SettingsMenu from '$lib/components/SettingsMenu.svelte';
+	import RileyMania from '$lib/components/RileyMania.svelte';
+	import rileySticker from '$lib/assets/riley_sticker.png';
+	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 
 	type PlotContent =
 		| { type: 'Png'; data: string }
@@ -23,21 +27,26 @@
 	let activeId: string | null = $state(null);
 	let plotlyEl: HTMLDivElement | null = $state(null);
 	let vegaEl: HTMLDivElement | null = $state(null);
-	let vegaCleanup: (() => void) | null = $state(null);
-	let plotlyModule: any = $state(null);
-	let vegaEmbed: any = $state(null);
+	let vegaCleanup: (() => void) | null = null;
+	let plotlyModule: any = null;
+	let vegaEmbed: any = null;
 	let historyEl: HTMLDivElement | null = $state(null);
 	let thumbnails: Record<string, string> = $state({});
 	const MAX_CLIENT_PLOTS = 200;
 
-	// Thumbnail generation queue to prevent UI freezing
 	let thumbnailQueue: PlotMessage[] = $state([]);
 	let isProcessingThumbnails = $state(false);
 
 	let current = $derived(plots.find((p) => p.id === activeId) ?? plots.at(-1));
-	let currentSrc = $derived(current ? renderSrc(current.content) : null);
+	let currentSrc = $derived(current ? renderSrc(current.content, current.id) : null);
 	let token = $derived($page.url.searchParams.get('token'));
 	let wsUrl = $derived(getWsUrl($page.url, token));
+	let bg = $derived(getBackground());
+	let linkLogo = $derived(getLinkLogo());
+	let thumbPos = $derived(getThumbPos());
+	let thumbIsVertical = $derived(thumbPos === 'left' || thumbPos === 'right');
+
+	const STICKER_STORE = 'https://www.stickermule.com/rileyleff/item/19535644';
 
 	$effect(() => {
 		if (browser && current?.content.type === 'Plotly' && plotlyEl) {
@@ -96,22 +105,26 @@
 		socket.addEventListener('message', async (event) => {
 			try {
 				const parsed = JSON.parse(event.data) as PlotMessage;
-				// Deduplicate by ID (server sends history on reconnect)
 				if (plots.some((p) => p.id === parsed.id)) {
 					return;
 				}
 				plots.push(parsed);
-				// Evict oldest plots to cap memory usage
 				while (plots.length > MAX_CLIENT_PLOTS) {
 					const evicted = plots.shift();
-					if (evicted) delete thumbnails[evicted.id];
+					if (evicted) {
+						delete thumbnails[evicted.id];
+						srcCache.delete(evicted.id);
+					}
 				}
 				activeId = parsed.id;
 				await tick();
 				if (historyEl) {
-					historyEl.scrollLeft = historyEl.scrollWidth;
+					if (thumbIsVertical) {
+						historyEl.scrollTop = historyEl.scrollHeight;
+					} else {
+						historyEl.scrollLeft = historyEl.scrollWidth;
+					}
 				}
-				// Queue thumbnail generation for Plotly/Vega (processed one at a time)
 				if (parsed.content.type === 'Plotly' || parsed.content.type === 'Vega') {
 					queueThumbnail(parsed);
 				}
@@ -137,29 +150,30 @@
 		return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 	}
 
-	function renderSrc(content: PlotContent): string | null {
+	const srcCache = new Map<string, string>();
+
+	function renderSrc(content: PlotContent, id?: string): string | null {
 		if (content.type === 'Png') return `data:image/png;base64,${content.data}`;
 		if (content.type === 'Svg') {
 			if (!browser) return null;
-			// Use TextEncoder + chunked btoa to handle large SVGs safely
-			// (spreading into String.fromCharCode crashes on SVGs > ~65KB)
+			if (id && srcCache.has(id)) return srcCache.get(id)!;
 			const bytes = new TextEncoder().encode(content.data);
 			let binary = '';
 			const chunkSize = 8192;
 			for (let i = 0; i < bytes.length; i += chunkSize) {
 				binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
 			}
-			return `data:image/svg+xml;base64,${btoa(binary)}`;
+			const src = `data:image/svg+xml;base64,${btoa(binary)}`;
+			if (id) srcCache.set(id, src);
+			return src;
 		}
 		return null;
 	}
 
 	function getThumbnailSrc(plot: PlotMessage): string | null {
-		// Check for generated thumbnail first (Plotly/Vega)
 		const generated = thumbnails[plot.id];
 		if (generated) return generated;
-		// Fall back to native image types
-		return renderSrc(plot.content);
+		return renderSrc(plot.content, plot.id);
 	}
 
 	function queueThumbnail(plot: PlotMessage) {
@@ -173,9 +187,13 @@
 
 		const plot = thumbnailQueue.shift();
 		if (plot) {
-			// Yield to main thread briefly to allow UI updates
-			await new Promise((r) => setTimeout(r, 0));
-			await generateThumbnail(plot);
+			// Wait for the main render to finish before generating thumbnails
+			await new Promise((r) => setTimeout(r, 500));
+			// Skip if this plot is currently displayed (avoid concurrent heavy renders)
+			if (plot.id !== activeId) {
+				await generateThumbnail(plot);
+			}
+			// If active, just drop it — the type label fallback is fine
 		}
 
 		isProcessingThumbnails = false;
@@ -197,7 +215,7 @@
 	}
 
 	async function generateThumbnail(plot: PlotMessage) {
-		if (thumbnails[plot.id]) return; // Already have one
+		if (thumbnails[plot.id]) return;
 
 		if (plot.content.type === 'Plotly') {
 			const offscreen = createOffscreenDiv();
@@ -238,7 +256,6 @@
 				const embed = vegaEmbed ?? (await import('vega-embed')).default;
 				vegaEmbed = embed;
 				const spec = JSON.parse(plot.content.data);
-
 				const specWithSize = {
 					...spec,
 					width: spec.width ?? 760,
@@ -286,6 +303,16 @@
 			const spec = JSON.parse(content.data);
 			const embed = vegaEmbed ?? (await import('vega-embed')).default;
 			vegaEmbed = embed;
+
+			// Size the chart to fill its container (minus padding)
+			const rect = vegaEl.getBoundingClientRect();
+			const w = Math.floor(rect.width) - 16;
+			const h = Math.floor(rect.height) - 16;
+			if (w > 0 && h > 0) {
+				spec.width = spec.width ?? w;
+				spec.height = spec.height ?? h;
+			}
+
 			const result = await embed(vegaEl, spec, { actions: false, renderer: 'canvas' });
 			vegaCleanup = () => result.view.finalize();
 		} catch (e) {
@@ -294,123 +321,164 @@
 	}
 </script>
 
-<div class="h-screen flex flex-col bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 text-slate-50">
-	<!-- Compact Header -->
-	<header class="flex-none flex items-center justify-between gap-3 border-b border-slate-800/70 bg-slate-900/60 px-4 py-2 backdrop-blur">
-		<div class="text-sm font-semibold uppercase tracking-[0.15em] text-slate-300">RileyViewer</div>
-		<div class="flex items-center gap-2">
-			<div class="flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900 px-2.5 py-0.5 text-xs">
-				<span class={`h-1.5 w-1.5 rounded-full ${
-					status === 'open'
-						? 'bg-emerald-400'
-						: status === 'connecting'
-							? 'bg-amber-400'
-							: 'bg-slate-500'
-				}`}></span>
-				<span class="capitalize text-slate-300">{status}</span>
-			</div>
-			{#if token}
-				<div class="rounded border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">
-					Token
+{#snippet stickerImg()}
+	<img
+		src={rileySticker}
+		alt="Riley"
+		class="w-[360px] h-auto transition-transform duration-200 hover:-rotate-3 hover:scale-105"
+	/>
+{/snippet}
+
+{#snippet thumbStrip()}
+	{#if plots.length === 0}
+		<div class={`flex-none text-xs text-[var(--color-text-faint)] py-4 px-2`}>
+			waiting for plots...
+		</div>
+	{:else}
+		{#each plots as plot (plot.id)}
+			{@const thumbSrc = getThumbnailSrc(plot)}
+			<button
+				class={`flex-none flex flex-col items-center gap-1 border p-1.5 transition-colors ${
+					activeId === plot.id
+						? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)]'
+						: 'border-[var(--color-border)] hover:border-[var(--color-text-faint)]'
+				}`}
+				onclick={() => (activeId = plot.id)}
+			>
+				<div class="w-20 h-14 bg-[var(--color-bg-canvas)] flex items-center justify-center overflow-hidden">
+					{#if thumbSrc}
+						<img
+							src={thumbSrc}
+							alt=""
+							class="w-full h-full object-contain"
+						/>
+					{:else}
+						<span class="text-[11px] text-[var(--color-text-faint)] uppercase">{plot.content.type}</span>
+					{/if}
 				</div>
-			{/if}
-			<button class="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-200 hover:border-slate-500 hover:bg-slate-700" onclick={connect}>
-				Reconnect
+				<span class="text-[11px] text-[var(--color-text-faint)]">{humanTime(plot.timestamp)}</span>
 			</button>
+		{/each}
+	{/if}
+{/snippet}
+
+<div class="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)]">
+	<header class="flex-none flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2">
+		<span class="text-sm font-semibold uppercase tracking-[0.1em]">rileyviewer</span>
+		<div class="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
+			<span class="flex items-center gap-1.5">
+				<span class={`inline-block h-1.5 w-1.5 rounded-full ${
+					status === 'open'
+						? 'bg-[var(--color-accent)]'
+						: status === 'connecting'
+							? 'bg-[var(--color-warning)]'
+							: 'bg-[var(--color-text-faint)]'
+				}`}></span>
+				<span>{status}</span>
+			</span>
+			{#if token}
+				<span class="text-[var(--color-accent)]">[token]</span>
+			{/if}
+			<SettingsMenu />
+			<button
+				class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
+				onclick={connect}
+			>[reconnect]</button>
 		</div>
 	</header>
 
 	{#if error}
-		<div class="flex-none border-b border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-100">
-			{error}
+		<div class="flex-none border-b border-[var(--color-error)] bg-[var(--color-error-muted)] px-4 py-2 text-sm text-[var(--color-error)]">
+			error: {error}
 		</div>
 	{/if}
 
-	<!-- Main Canvas Area -->
-	<main class="flex-1 min-h-0 p-4">
-		{#if !current}
-			<div class="h-full flex items-center justify-center">
-				<div class="rounded-xl border border-dashed border-slate-700 px-8 py-12 text-center text-slate-400">
-					<div class="text-lg mb-1">No plots yet</div>
-					<div class="text-sm">Send from Python to see them here</div>
-				</div>
+	<div class={`flex-1 min-h-0 flex ${thumbIsVertical ? 'flex-row' : 'flex-col'}`}>
+		{#if thumbPos === 'top' || thumbPos === 'left'}
+			<div
+				bind:this={historyEl}
+				class={`flex-none bg-[var(--color-bg-raised)] ${
+					thumbIsVertical
+						? 'flex flex-col gap-2 p-3 overflow-y-auto border-r border-[var(--color-border)]'
+						: 'flex gap-2 p-3 overflow-x-auto border-b border-[var(--color-border)]'
+				}`}
+				style="scrollbar-width: thin; scrollbar-color: var(--color-border) transparent;"
+			>
+				{@render thumbStrip()}
 			</div>
-		{:else}
-			{#if current.content.type === 'Png' || current.content.type === 'Svg'}
-				<div class="h-full flex items-center justify-center">
-					{#if currentSrc}
-						<img
-							class="h-full w-auto max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
-							src={currentSrc}
-							alt="plot"
-						/>
-					{/if}
-				</div>
-			{:else if current.content.type === 'Plotly'}
-				<div class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40 p-2">
-					<div bind:this={plotlyEl} class="w-full h-full"></div>
-				</div>
-			{:else if current.content.type === 'Vega'}
-				<div class="w-full h-full rounded-lg border border-slate-800 bg-slate-950/40 p-2">
-					<div bind:this={vegaEl} class="w-full h-full"></div>
-				</div>
-			{:else if current.content.type === 'Html'}
-				<div class="h-full flex items-center justify-center">
-					<iframe
-						srcdoc={current.content.data}
-						class="h-full w-auto max-w-full aspect-[10/7] rounded-lg border border-slate-800 bg-slate-950/40"
-						sandbox="allow-scripts"
-						title="HTML content"
-					></iframe>
-				</div>
-			{:else}
-				<div class="h-full flex items-center justify-center">
-					<pre class="max-h-full overflow-auto rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-xs text-slate-200">
-{JSON.stringify(current.content, null, 2)}
-					</pre>
-				</div>
-			{/if}
 		{/if}
-	</main>
 
-	<!-- Horizontal Thumbnail History Bar -->
-	<footer class="flex-none border-t border-slate-800/70 bg-slate-900/60 backdrop-blur">
-		<div
-			bind:this={historyEl}
-			class="flex gap-2 p-3 overflow-x-auto"
-			style="scrollbar-width: thin; scrollbar-color: #334155 transparent;"
-		>
-			{#if plots.length === 0}
-				<div class="flex-none text-sm text-slate-500 py-4 px-2">
-					Waiting for plots...
-				</div>
-			{:else}
-				{#each plots as plot}
-					{@const thumbSrc = getThumbnailSrc(plot)}
-					<button
-						class={`flex-none flex flex-col items-center gap-1 rounded-lg border p-1.5 transition hover:border-slate-500 ${
-							activeId === plot.id
-								? 'border-emerald-400/60 bg-emerald-400/10'
-								: 'border-slate-700 bg-slate-800/60'
-						}`}
-						onclick={() => (activeId = plot.id)}
-					>
-						<div class="w-20 h-14 rounded bg-slate-900 flex items-center justify-center overflow-hidden">
-							{#if thumbSrc}
-								<img
-									src={thumbSrc}
-									alt=""
-									class="w-full h-full object-contain"
-								/>
+		<main class="flex-1 min-h-0 min-w-0 p-3">
+			{#if !current}
+				<div class="h-full relative flex flex-col items-center justify-center text-[var(--color-text-faint)] gap-4">
+					{#if bg === 'mania'}
+						<RileyMania />
+					{:else if bg === 'sticker'}
+						<div class="relative z-10">
+							{#if linkLogo}
+								<a href={STICKER_STORE} target="_blank" rel="noopener noreferrer">
+									{@render stickerImg()}
+								</a>
 							{:else}
-								<span class="text-xs text-slate-500 uppercase">{plot.content.type}</span>
+								{@render stickerImg()}
 							{/if}
 						</div>
-						<span class="text-[10px] text-slate-400">{humanTime(plot.timestamp)}</span>
-					</button>
-				{/each}
+					{/if}
+					<div class="text-center relative z-10">
+						<div class="text-sm">no plots yet</div>
+						<div class="text-xs mt-1">send from python to see them here</div>
+					</div>
+				</div>
+			{:else}
+				{#if current.content.type === 'Png' || current.content.type === 'Svg'}
+					<div class="h-full flex items-center justify-center">
+						{#if currentSrc}
+							<img
+								class="h-full w-auto max-w-full border border-[var(--color-border)] bg-[var(--color-bg-canvas)] object-contain"
+								src={currentSrc}
+								alt="plot"
+							/>
+						{/if}
+					</div>
+				{:else if current.content.type === 'Plotly'}
+					<div class="w-full h-full border border-[var(--color-border)] bg-[var(--color-bg-canvas)] p-2">
+						<div bind:this={plotlyEl} class="w-full h-full"></div>
+					</div>
+				{:else if current.content.type === 'Vega'}
+					<div class="w-full h-full border border-[var(--color-border)] bg-[var(--color-bg-canvas)] p-2">
+						<div bind:this={vegaEl} class="w-full h-full"></div>
+					</div>
+				{:else if current.content.type === 'Html'}
+					<div class="h-full flex items-center justify-center">
+						<iframe
+							srcdoc={current.content.data}
+							class="h-full w-auto max-w-full aspect-[10/7] border border-[var(--color-border)] bg-[var(--color-bg-canvas)]"
+							sandbox="allow-scripts"
+							title="HTML content"
+						></iframe>
+					</div>
+				{:else}
+					<div class="h-full flex items-center justify-center">
+						<pre class="max-h-full overflow-auto border border-[var(--color-border)] bg-[var(--color-bg-canvas)] p-4 text-xs">
+{JSON.stringify(current.content, null, 2)}
+						</pre>
+					</div>
+				{/if}
 			{/if}
-		</div>
-	</footer>
-</div>
+		</main>
 
+		{#if thumbPos === 'bottom' || thumbPos === 'right'}
+			<div
+				bind:this={historyEl}
+				class={`flex-none bg-[var(--color-bg-raised)] ${
+					thumbIsVertical
+						? 'flex flex-col gap-2 p-3 overflow-y-auto border-l border-[var(--color-border)]'
+						: 'flex gap-2 p-3 overflow-x-auto border-t border-[var(--color-border)]'
+				}`}
+				style="scrollbar-width: thin; scrollbar-color: var(--color-border) transparent;"
+			>
+				{@render thumbStrip()}
+			</div>
+		{/if}
+	</div>
+</div>

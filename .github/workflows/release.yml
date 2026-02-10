@@ -103,9 +103,11 @@ jobs:
 
       - name: Prepare binary (Windows)
         if: runner.os == 'Windows'
+        shell: bash
         run: |
           mkdir -p python/bin
           cp target/${{ matrix.target }}/release/rileyviewer.exe python/bin/rileyviewer.exe
+          cp target/${{ matrix.target }}/release/rileyviewer.exe python/bin/rileyviewer
 
       - name: Upload CLI binary
         uses: actions/upload-artifact@v4

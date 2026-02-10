@@ -1,0 +1,24 @@
+[  234405ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:9877/ws?token=49d9521560bf4448953d7cfccf146f43' failed:  @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0
+[  234407ms] [WARNING] WARN Loading failed https://vega.github.io/vega-lite/data/cars.json TypeError: Failed to fetch
+    at window.fetch (http://127.0.0.1:9877/_app/immutable/chunks/Ln86qxuW.js:1:1372)
+    at Object.http (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:7:35902)
+    at Object.vP [as load] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:7:35032)
+    at async _O.YP [as request] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:8:7916)
+    at async _O.XP [as preload] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:8:8202) @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[  234409ms] [WARNING] WARN Infinite extent for field "Horsepower": [Infinity, -Infinity] @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[  234409ms] [WARNING] WARN Infinite extent for field "Miles_per_Gallon": [Infinity, -Infinity] @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[  234413ms] [ERROR] ws error Event @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0
+[  234416ms] [WARNING] WARN Loading failed https://vega.github.io/vega-lite/data/cars.json TypeError: Failed to fetch
+    at window.fetch (http://127.0.0.1:9877/_app/immutable/chunks/Ln86qxuW.js:1:1372)
+    at Object.http (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:7:35902)
+    at Object.vP [as load] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:7:35032)
+    at async _O.YP [as request] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:8:7916)
+    at async _O.XP [as preload] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:8:8202) @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[  234416ms] [WARNING] WARN Infinite extent for field "Horsepower": [Infinity, -Infinity] @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[  234416ms] [WARNING] WARN Infinite extent for field "Miles_per_Gallon": [Infinity, -Infinity] @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[  235426ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:9877/ws?token=49d9521560bf4448953d7cfccf146f43' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0
+[  235426ms] [ERROR] ws error Event @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0
+[  237435ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:9877/ws?token=49d9521560bf4448953d7cfccf146f43' failed: HTTP Authentication failed; no valid credentials available @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0
+[  237440ms] [ERROR] ws error Event @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0
+[  241450ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:9877/ws?token=49d9521560bf4448953d7cfccf146f43' failed: HTTP Authentication failed; no valid credentials available @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0
+[  241450ms] [ERROR] ws error Event @ http://127.0.0.1:9877/_app/immutable/nodes/2.5HEMdHK_.js:0

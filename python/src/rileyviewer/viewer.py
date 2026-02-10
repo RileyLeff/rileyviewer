@@ -54,32 +54,38 @@ def _check_server_running(host: str, port: int) -> bool:
 def _find_cli_binary() -> Optional[str]:
     """Find the rileyviewer CLI binary."""
     import shutil
+    import sys
 
-    # Check if it's in PATH
+    names = ["rileyviewer.exe", "rileyviewer"] if sys.platform == "win32" else ["rileyviewer"]
+
+    # Check if it's in PATH (shutil.which handles PATHEXT on Windows)
     cli = shutil.which("rileyviewer")
     if cli:
         return cli
 
     # Check common cargo install locations
-    cargo_bin = Path.home() / ".cargo" / "bin" / "rileyviewer"
-    if cargo_bin.exists():
-        return str(cargo_bin)
+    for name in names:
+        cargo_bin = Path.home() / ".cargo" / "bin" / name
+        if cargo_bin.exists():
+            return str(cargo_bin)
 
     # Check if we're in development mode - look for target/debug or target/release
     # First check relative to cwd (for uv run scripts where package is in cache)
     cwd = Path.cwd()
     for profile in ["release", "debug"]:
-        dev_binary = cwd / "target" / profile / "rileyviewer"
-        if dev_binary.exists():
-            return str(dev_binary)
+        for name in names:
+            dev_binary = cwd / "target" / profile / name
+            if dev_binary.exists():
+                return str(dev_binary)
 
     # Also check relative to the package location (for editable installs)
     # __file__ = python/src/rileyviewer/viewer.py -> 4x .parent = repo root
     pkg_dir = Path(__file__).parent.parent.parent.parent
     for profile in ["release", "debug"]:
-        dev_binary = pkg_dir / "target" / profile / "rileyviewer"
-        if dev_binary.exists():
-            return str(dev_binary)
+        for name in names:
+            dev_binary = pkg_dir / "target" / profile / name
+            if dev_binary.exists():
+                return str(dev_binary)
 
     return None
 
@@ -216,8 +222,13 @@ class Viewer:
         for attempt in range(max_retries):
             try:
                 with urllib.request.urlopen(req, timeout=5) as resp:
-                    result = json.loads(resp.read().decode("utf-8"))
-                    return result["id"]
+                    try:
+                        result = json.loads(resp.read().decode("utf-8"))
+                        return result["id"]
+                    except (json.JSONDecodeError, KeyError) as e:
+                        raise ServerConnectionError(
+                            f"Unexpected response from server: {e}"
+                        ) from e
             except urllib.error.HTTPError as e:
                 # Don't retry client errors (4xx) - they won't succeed
                 if 400 <= e.code < 500:

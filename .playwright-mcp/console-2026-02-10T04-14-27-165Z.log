@@ -1,0 +1,8 @@
+[      79ms] [WARNING] WARN Loading failed https://vega.github.io/vega-lite/data/cars.json TypeError: Failed to fetch
+    at window.fetch (http://127.0.0.1:9877/_app/immutable/chunks/Ln86qxuW.js:1:1372)
+    at Object.http (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:7:35902)
+    at Object.vP [as load] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:7:35032)
+    at async _O.YP [as request] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:8:7916)
+    at async _O.XP [as preload] (http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:8:8202) @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[      79ms] [WARNING] WARN Infinite extent for field "Horsepower": [Infinity, -Infinity] @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2
+[      79ms] [WARNING] WARN Infinite extent for field "Miles_per_Gallon": [Infinity, -Infinity] @ http://127.0.0.1:9877/_app/immutable/chunks/CNnNVxXy.js:2

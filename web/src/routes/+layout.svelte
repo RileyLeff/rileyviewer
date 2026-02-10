@@ -1,8 +1,14 @@
 <script lang="ts">
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
-	
+	import { onMount } from 'svelte';
+	import { initSystemListener } from '$lib/theme.svelte';
+	import favicon from '$lib/assets/riley_logo.svg';
+
 	let { children } = $props();
+
+	onMount(() => {
+		return initSystemListener();
+	});
 </script>
 
 <svelte:head>
