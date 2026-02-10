@@ -69,6 +69,7 @@
 	onMount(() => {
 		connect();
 		return () => {
+			++socketGeneration; // prevent stale close handler from scheduling reconnect
 			vegaCleanup?.();
 			plotlyCleanup?.();
 			if (reconnectTimer) clearTimeout(reconnectTimer);

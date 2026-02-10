@@ -152,12 +152,10 @@ pub async fn start_server_with(config: ServerConfig) -> anyhow::Result<ServerHan
 
     let state = PlotState::new(config.history_limit);
     let router = build_router(state.clone(), token.clone(), config.dist_dir.clone());
-    let bind_addr: SocketAddr = format!("{}:{}", config.host, config.port)
-        .parse()
-        .with_context(|| format!("invalid host/port: {}:{}", config.host, config.port))?;
-    let listener = TcpListener::bind(bind_addr)
+    let bind_str = format!("{}:{}", config.host, config.port);
+    let listener = TcpListener::bind(&bind_str)
         .await
-        .with_context(|| format!("failed binding to {bind_addr}"))?;
+        .with_context(|| format!("failed binding to {bind_str}"))?;
     let addr = listener.local_addr().context("failed to get local address")?;
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();

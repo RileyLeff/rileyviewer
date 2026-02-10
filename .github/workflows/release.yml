@@ -161,20 +161,19 @@ jobs:
           python-version: "3.11"
 
       - name: Install build tools
-        run: pip install build hatchling
+        run: pip install build hatchling wheel
 
       - name: Build wheel
         working-directory: python
         run: python -m build --wheel
 
-      - name: Rename wheel with platform tag
+      - name: Re-tag wheel with platform tag
         working-directory: python/dist
         shell: bash
         run: |
-          # Rename from py3-none-any to py3-none-{platform} (PEP 427 compliant)
+          # Use `wheel tags` to update both filename AND internal WHEEL metadata
           for f in *.whl; do
-            newname=$(echo "$f" | sed "s/py3-none-any/py3-none-${{ matrix.platform }}/")
-            mv "$f" "$newname"
+            python -m wheel tags --platform-tag=${{ matrix.platform }} "$f" --remove
           done
 
       - name: Upload wheel
