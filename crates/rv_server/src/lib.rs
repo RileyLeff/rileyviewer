@@ -219,6 +219,7 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
 ) -> Response {
     if !token_valid(&token, query.token.as_deref()) {
+        warn!("WebSocket connection rejected: invalid or missing token");
         return StatusCode::UNAUTHORIZED.into_response();
     }
     ws.on_upgrade(move |socket| handle_socket(state, socket))
@@ -299,6 +300,7 @@ async fn publish_handler(
     Json(req): Json<PublishRequest>,
 ) -> Response {
     if !token_valid(&expected_token, req.token.as_deref()) {
+        warn!("Publish request rejected: invalid or missing token");
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let msg = PlotMessage::new(req.content);

@@ -21,6 +21,7 @@
 	};
 
 	let socket: WebSocket | null = $state(null);
+	let socketGeneration = 0; // tracks which socket is "current" to ignore stale close events
 	let status: 'idle' | 'connecting' | 'open' | 'closed' | 'error' = $state('idle');
 	let error: string | null = $state(null);
 	let plots: PlotMessage[] = $state([]);
@@ -30,6 +31,7 @@
 	let vegaCleanup: (() => void) | null = null;
 	let plotlyModule: any = null;
 	let vegaEmbed: any = null;
+	let renderGeneration = 0; // cancellation token for async renders
 	let historyEl: HTMLDivElement | null = $state(null);
 	let thumbnails: Record<string, string> = $state({});
 	const MAX_CLIENT_PLOTS = 200;
@@ -95,14 +97,17 @@
 			reconnectTimer = null;
 		}
 		socket?.close();
+		const gen = ++socketGeneration;
 		socket = new WebSocket(wsUrl);
 
 		socket.addEventListener('open', () => {
+			if (gen !== socketGeneration) return;
 			status = 'open';
 			reconnectAttempt = 0;
 		});
 
 		socket.addEventListener('message', async (event) => {
+			if (gen !== socketGeneration) return;
 			try {
 				const parsed = JSON.parse(event.data) as PlotMessage;
 				if (plots.some((p) => p.id === parsed.id)) {
@@ -134,11 +139,13 @@
 		});
 
 		socket.addEventListener('close', () => {
+			if (gen !== socketGeneration) return; // stale socket, ignore
 			status = 'closed';
 			scheduleReconnect();
 		});
 
 		socket.addEventListener('error', (e) => {
+			if (gen !== socketGeneration) return;
 			status = 'error';
 			error = 'Unable to connect (check token?)';
 			console.error('ws error', e);
@@ -185,19 +192,22 @@
 		if (isProcessingThumbnails || thumbnailQueue.length === 0) return;
 		isProcessingThumbnails = true;
 
-		const plot = thumbnailQueue.shift();
-		if (plot) {
-			// Wait for the main render to finish before generating thumbnails
-			await new Promise((r) => setTimeout(r, 500));
-			// Skip if this plot is currently displayed (avoid concurrent heavy renders)
-			if (plot.id !== activeId) {
-				await generateThumbnail(plot);
+		try {
+			while (thumbnailQueue.length > 0) {
+				const plot = thumbnailQueue.shift();
+				if (plot) {
+					// Wait for the main render to finish before generating thumbnails
+					await new Promise((r) => setTimeout(r, 500));
+					// Skip if this plot is currently displayed (avoid concurrent heavy renders)
+					if (plot.id !== activeId) {
+						await generateThumbnail(plot);
+					}
+					// If active, just drop it — the type label fallback is fine
+				}
 			}
-			// If active, just drop it — the type label fallback is fine
+		} finally {
+			isProcessingThumbnails = false;
 		}
-
-		isProcessingThumbnails = false;
-		processThumbnailQueue();
 	}
 
 	function createOffscreenDiv(): HTMLDivElement {
@@ -283,11 +293,12 @@
 
 	async function renderPlotly(content: Extract<PlotContent, { type: 'Plotly' }>) {
 		if (!plotlyEl) return;
+		const gen = ++renderGeneration;
 		try {
 			const payload = JSON.parse(content.data);
 			const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
 			plotlyModule = Plotly;
-			if (!plotlyEl) return; // element may have unmounted during import
+			if (gen !== renderGeneration || !plotlyEl) return; // stale or unmounted
 			await Plotly.react(plotlyEl, payload.data ?? payload, {
 				...(payload.layout ?? {}),
 				autosize: true,
@@ -299,12 +310,14 @@
 
 	async function renderVega(content: Extract<PlotContent, { type: 'Vega' }>) {
 		if (!vegaEl) return;
+		const gen = ++renderGeneration;
 		try {
 			vegaCleanup?.();
+			vegaCleanup = null;
 			const spec = JSON.parse(content.data);
 			const embed = vegaEmbed ?? (await import('vega-embed')).default;
 			vegaEmbed = embed;
-			if (!vegaEl) return; // element may have unmounted during import
+			if (gen !== renderGeneration || !vegaEl) return; // stale or unmounted
 
 			// Size the chart to fit within its container (including axes/title/legend)
 			const rect = vegaEl.getBoundingClientRect();
@@ -317,6 +330,10 @@
 			}
 
 			const result = await embed(vegaEl, spec, { actions: false, renderer: 'canvas' });
+			if (gen !== renderGeneration) {
+				result.view.finalize(); // cleanup orphaned render
+				return;
+			}
 			vegaCleanup = () => result.view.finalize();
 		} catch (e) {
 			console.error('Failed to render Vega chart:', e);

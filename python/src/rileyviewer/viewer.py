@@ -222,6 +222,10 @@ class Viewer:
         for attempt in range(max_retries):
             try:
                 with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status != 200:
+                        raise ServerConnectionError(
+                            f"Server returned HTTP {resp.status}"
+                        )
                     try:
                         result = json.loads(resp.read().decode("utf-8"))
                         return result["id"]

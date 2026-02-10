@@ -79,6 +79,7 @@ fn write_state(state: &ServerState) -> Result<()> {
     let mut file = fs::File::create(&path).context("failed to create state file")?;
     let json = serde_json::to_string_pretty(state)?;
     file.write_all(json.as_bytes())?;
+    file.sync_all().context("failed to flush state file to disk")?;
     Ok(())
 }
 
