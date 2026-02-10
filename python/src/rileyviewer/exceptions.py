@@ -26,10 +26,8 @@ class CLINotFoundError(RileyViewerError):
 
     def __init__(self) -> None:
         super().__init__(
-            "rileyviewer CLI not found. Install via one of:\n"
-            "  pip install rileyviewer        # includes CLI (coming soon)\n"
-            "  brew install rileyleff/tap/rileyviewer\n"
-            "  cargo install rileyviewer"
+            "rileyviewer CLI binary not found. Install with:\n"
+            "  uv add rileyviewer"
         )
 
 

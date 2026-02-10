@@ -1,5 +1,31 @@
-.mplconfig
-target
-**/target
-target/*
-.pl
+# Build artifacts
+target/
+**/target/
+web/dist/
+web/.svelte-kit/
+web/node_modules/
+
+# Python
+.venv/
+python/.venv/
+python/bin/
+python/dist/
+*.egg-info/
+__pycache__/
+
+# Matplotlib cache
+.mplconfig/
+
+# Playwright MCP (browser automation artifacts)
+.playwright-mcp/
+
+# Editor / IDE
+.DS_Store
+*.swp
+*.swo
+
+# Screenshots from testing
+*.png
+!web/src/lib/assets/*.png
+!web/static/*.png
+!assets/*.png

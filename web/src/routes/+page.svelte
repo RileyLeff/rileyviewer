@@ -287,6 +287,7 @@
 			const payload = JSON.parse(content.data);
 			const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
 			plotlyModule = Plotly;
+			if (!plotlyEl) return; // element may have unmounted during import
 			await Plotly.react(plotlyEl, payload.data ?? payload, {
 				...(payload.layout ?? {}),
 				autosize: true,
@@ -303,14 +304,16 @@
 			const spec = JSON.parse(content.data);
 			const embed = vegaEmbed ?? (await import('vega-embed')).default;
 			vegaEmbed = embed;
+			if (!vegaEl) return; // element may have unmounted during import
 
-			// Size the chart to fill its container (minus padding)
+			// Size the chart to fit within its container (including axes/title/legend)
 			const rect = vegaEl.getBoundingClientRect();
 			const w = Math.floor(rect.width) - 16;
 			const h = Math.floor(rect.height) - 16;
 			if (w > 0 && h > 0) {
 				spec.width = spec.width ?? w;
 				spec.height = spec.height ?? h;
+				spec.autosize = spec.autosize ?? { type: 'fit', contains: 'padding' };
 			}
 
 			const result = await embed(vegaEl, spec, { actions: false, renderer: 'canvas' });

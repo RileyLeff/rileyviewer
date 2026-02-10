@@ -1,4 +1,0 @@
-[  126894ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:7878/ws?token=7716712f27734574ab15dcd4b060837f' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7878/_app/immutable/nodes/2.BlHfCccj.js:0
-[  126895ms] [ERROR] ws error Event @ http://127.0.0.1:7878/_app/immutable/nodes/2.BlHfCccj.js:0
-[  128907ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:7878/ws?token=7716712f27734574ab15dcd4b060837f' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7878/_app/immutable/nodes/2.BlHfCccj.js:0
-[  128907ms] [ERROR] ws error Event @ http://127.0.0.1:7878/_app/immutable/nodes/2.BlHfCccj.js:0
