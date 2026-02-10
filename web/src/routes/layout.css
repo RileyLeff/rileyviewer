@@ -1,1 +1,46 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+	--font-mono: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+		"DejaVu Sans Mono", monospace;
+
+	--color-bg: #f5f2eb;
+	--color-bg-raised: #eae6dd;
+	--color-bg-canvas: #faf8f4;
+	--color-border: #d4cfc5;
+	--color-border-subtle: #e2ded5;
+	--color-text: #1a1a1a;
+	--color-text-muted: #6b6560;
+	--color-text-faint: #9e9890;
+	--color-accent: #2f9e44;
+	--color-accent-muted: rgba(47, 158, 68, 0.13);
+	--color-error: #c92a2a;
+	--color-error-muted: rgba(201, 42, 42, 0.1);
+	--color-warning: #e67700;
+}
+
+.dark {
+	--color-bg: #1c1b19;
+	--color-bg-raised: #252420;
+	--color-bg-canvas: #141310;
+	--color-border: #3a3832;
+	--color-border-subtle: #2e2c27;
+	--color-text: #e8e4db;
+	--color-text-muted: #9e9890;
+	--color-text-faint: #6b6560;
+	--color-accent: #40c057;
+	--color-accent-muted: rgba(64, 192, 87, 0.13);
+	--color-error: #ff6b6b;
+	--color-error-muted: rgba(255, 107, 107, 0.1);
+	--color-warning: #ffa94d;
+}
+
+html {
+	font-family: var(--font-mono);
+	font-size: 14px;
+	line-height: 1.7;
+	background-color: var(--color-bg);
+	color: var(--color-text);
+}

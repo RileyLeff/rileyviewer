@@ -180,10 +180,15 @@ class Viewer:
                     "Check that the rileyviewer CLI is installed and working."
                 )
 
-            # Read token from state file (guaranteed to exist now)
-            state = _read_server_state()
-            if state and state.get("addr") == f"{self._host}:{self._port}":
-                self._token = state.get("token")
+            # Read token from state file. The state file is written after bind,
+            # but there's a small race where health can respond before the file
+            # is flushed to disk, so retry a few times.
+            for _ in range(20):  # 2 seconds max
+                state = _read_server_state()
+                if state and state.get("addr") == f"{self._host}:{self._port}":
+                    self._token = state.get("token")
+                    break
+                time.sleep(0.1)
 
     @property
     def addr(self) -> str:

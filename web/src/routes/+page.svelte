@@ -28,12 +28,14 @@
 	let vegaEmbed: any = $state(null);
 	let historyEl: HTMLDivElement | null = $state(null);
 	let thumbnails: Record<string, string> = $state({});
+	const MAX_CLIENT_PLOTS = 200;
 
 	// Thumbnail generation queue to prevent UI freezing
 	let thumbnailQueue: PlotMessage[] = $state([]);
 	let isProcessingThumbnails = $state(false);
 
 	let current = $derived(plots.find((p) => p.id === activeId) ?? plots.at(-1));
+	let currentSrc = $derived(current ? renderSrc(current.content) : null);
 	let token = $derived($page.url.searchParams.get('token'));
 	let wsUrl = $derived(getWsUrl($page.url, token));
 
@@ -99,6 +101,11 @@
 					return;
 				}
 				plots.push(parsed);
+				// Evict oldest plots to cap memory usage
+				while (plots.length > MAX_CLIENT_PLOTS) {
+					const evicted = plots.shift();
+					if (evicted) delete thumbnails[evicted.id];
+				}
 				activeId = parsed.id;
 				await tick();
 				if (historyEl) {
@@ -207,7 +214,10 @@
 
 				const img = new Image();
 				img.src = fullDataUrl;
-				await new Promise((resolve) => (img.onload = resolve));
+				await new Promise((resolve, reject) => {
+					img.onload = resolve;
+					img.onerror = reject;
+				});
 
 				const canvas = document.createElement('canvas');
 				canvas.width = 160;
@@ -256,23 +266,31 @@
 
 	async function renderPlotly(content: Extract<PlotContent, { type: 'Plotly' }>) {
 		if (!plotlyEl) return;
-		const payload = JSON.parse(content.data);
-		const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
-		plotlyModule = Plotly;
-		await Plotly.react(plotlyEl, payload.data ?? payload, {
-			...(payload.layout ?? {}),
-			autosize: true,
-		}, { responsive: true });
+		try {
+			const payload = JSON.parse(content.data);
+			const Plotly = plotlyModule ?? (await import('plotly.js-dist-min')).default;
+			plotlyModule = Plotly;
+			await Plotly.react(plotlyEl, payload.data ?? payload, {
+				...(payload.layout ?? {}),
+				autosize: true,
+			}, { responsive: true });
+		} catch (e) {
+			console.error('Failed to render Plotly chart:', e);
+		}
 	}
 
 	async function renderVega(content: Extract<PlotContent, { type: 'Vega' }>) {
 		if (!vegaEl) return;
-		vegaCleanup?.();
-		const spec = JSON.parse(content.data);
-		const embed = vegaEmbed ?? (await import('vega-embed')).default;
-		vegaEmbed = embed;
-		const result = await embed(vegaEl, spec, { actions: false, renderer: 'canvas' });
-		vegaCleanup = () => result.view.finalize();
+		try {
+			vegaCleanup?.();
+			const spec = JSON.parse(content.data);
+			const embed = vegaEmbed ?? (await import('vega-embed')).default;
+			vegaEmbed = embed;
+			const result = await embed(vegaEl, spec, { actions: false, renderer: 'canvas' });
+			vegaCleanup = () => result.view.finalize();
+		} catch (e) {
+			console.error('Failed to render Vega chart:', e);
+		}
 	}
 </script>
 
@@ -318,22 +336,12 @@
 				</div>
 			</div>
 		{:else}
-			{#if current.content.type === 'Png'}
+			{#if current.content.type === 'Png' || current.content.type === 'Svg'}
 				<div class="h-full flex items-center justify-center">
-					{#if renderSrc(current.content)}
+					{#if currentSrc}
 						<img
 							class="h-full w-auto max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
-							src={renderSrc(current.content) ?? ''}
-							alt="plot"
-						/>
-					{/if}
-				</div>
-			{:else if current.content.type === 'Svg'}
-				<div class="h-full flex items-center justify-center">
-					{#if renderSrc(current.content)}
-						<img
-							class="h-full w-auto max-w-full rounded-lg border border-slate-800 bg-slate-950/40 object-contain"
-							src={renderSrc(current.content) ?? ''}
+							src={currentSrc}
 							alt="plot"
 						/>
 					{/if}
@@ -378,6 +386,7 @@
 				</div>
 			{:else}
 				{#each plots as plot}
+					{@const thumbSrc = getThumbnailSrc(plot)}
 					<button
 						class={`flex-none flex flex-col items-center gap-1 rounded-lg border p-1.5 transition hover:border-slate-500 ${
 							activeId === plot.id
@@ -387,9 +396,9 @@
 						onclick={() => (activeId = plot.id)}
 					>
 						<div class="w-20 h-14 rounded bg-slate-900 flex items-center justify-center overflow-hidden">
-							{#if getThumbnailSrc(plot)}
+							{#if thumbSrc}
 								<img
-									src={getThumbnailSrc(plot)}
+									src={thumbSrc}
 									alt=""
 									class="w-full h-full object-contain"
 								/>

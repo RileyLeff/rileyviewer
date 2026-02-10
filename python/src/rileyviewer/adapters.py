@@ -77,12 +77,13 @@ def send_object_http(
         return _send_matplotlib_http(viewer, obj, fmt)
 
     # plotly
-    if obj.__class__.__module__.startswith("plotly") or hasattr(obj, "to_plotly_json"):
+    module = getattr(obj.__class__, "__module__", "") or ""
+    if module.startswith("plotly") or hasattr(obj, "to_plotly_json"):
         payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_plotly_json())
         return viewer.send_plotly_json(payload)
 
     # altair / vega-lite (check module name, not just to_dict which is too broad)
-    if obj.__class__.__module__.startswith("altair"):
+    if module.startswith("altair"):
         payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_dict())
         return viewer.send_vega_json(payload)
 
@@ -94,12 +95,13 @@ def send_object_http(
 
 
 def _send_matplotlib_http(viewer, fig: Any, format: MatplotlibFormat = "svg") -> str:
-    """Send a matplotlib figure via HTTP."""
-    import matplotlib.pyplot as plt
+    """Send a matplotlib figure via HTTP.
 
+    Note: This does NOT close the figure. Use viewer.capture() context manager
+    or plt.close(fig) manually if you want to close figures after sending.
+    """
     buf = io.BytesIO()
     fig.savefig(buf, format=format)
-    plt.close(fig)
 
     if format == "svg":
         return viewer.send_svg(buf.getvalue().decode("utf-8"))

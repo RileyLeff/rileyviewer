@@ -19,13 +19,13 @@ use tokio::{
     sync::{broadcast, oneshot, RwLock},
     task::JoinHandle,
 };
+#[cfg(not(feature = "embed-assets"))]
 use tower_http::services::{ServeDir, ServeFile};
 #[cfg(feature = "embed-assets")]
 use {
     axum::body::Body,
     axum::http::{header, Uri},
     rust_embed::RustEmbed,
-    tower_http::services::ServeFile,
 };
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -225,7 +225,10 @@ async fn ws_handler(
 }
 
 async fn handle_socket(state: PlotState, mut socket: WebSocket) {
-    // send history first
+    // Subscribe BEFORE reading history to avoid missing plots published in between.
+    // The client deduplicates by ID, so overlap between history and live messages is fine.
+    let mut rx = state.tx.subscribe();
+
     let history = state.history.read().await.clone();
     let history_count = history.len();
     if let Err(e) = send_history(history, &mut socket).await {
@@ -233,8 +236,6 @@ async fn handle_socket(state: PlotState, mut socket: WebSocket) {
         return;
     }
     debug!("Sent {} history items to new WebSocket client", history_count);
-
-    let mut rx = state.tx.subscribe();
     loop {
         match rx.recv().await {
             Ok(msg) => {
