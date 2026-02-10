@@ -5,6 +5,7 @@
 	import SettingsMenu from '$lib/components/SettingsMenu.svelte';
 	import RileyMania from '$lib/components/RileyMania.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
+	import ExportMenu from '$lib/components/ExportMenu.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 
@@ -496,6 +497,9 @@
 			</span>
 			{#if token}
 				<span class="text-[var(--color-accent)]">[token]</span>
+			{/if}
+			{#if current}
+				<ExportMenu content={current.content} />
 			{/if}
 			<SettingsMenu />
 			<button
