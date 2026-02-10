@@ -4,6 +4,7 @@
 	import { browser } from '$app/environment';
 	import SettingsMenu from '$lib/components/SettingsMenu.svelte';
 	import RileyMania from '$lib/components/RileyMania.svelte';
+	import DataTable from '$lib/components/DataTable.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 
@@ -12,7 +13,9 @@
 		| { type: 'Svg'; data: string }
 		| { type: 'Plotly'; data: string }
 		| { type: 'Vega'; data: string }
-		| { type: 'Html'; data: string };
+		| { type: 'Html'; data: string }
+		| { type: 'ArrowIpc'; data: string }
+		| { type: 'Csv'; data: string };
 
 	type PlotMessage = {
 		id: string;
@@ -392,6 +395,8 @@
 				await navigator.clipboard.writeText(current.content.data);
 			} else if (current.content.type === 'Html') {
 				await navigator.clipboard.writeText(current.content.data);
+			} else if (current.content.type === 'Csv') {
+				await navigator.clipboard.writeText(current.content.data);
 			}
 		} catch (e) {
 			console.warn('Copy to clipboard failed:', e);
@@ -560,6 +565,10 @@
 				{:else if current.content.type === 'Vega'}
 					<div class="w-full h-full border border-[var(--color-border)] bg-[var(--color-bg-canvas)] p-2">
 						<div bind:this={vegaEl} class="w-full h-full"></div>
+					</div>
+				{:else if current.content.type === 'ArrowIpc' || current.content.type === 'Csv'}
+					<div class="h-full w-full">
+						<DataTable data={current.content.data} format={current.content.type} />
 					</div>
 				{:else if current.content.type === 'Html'}
 					<div class="h-full flex items-center justify-center">
