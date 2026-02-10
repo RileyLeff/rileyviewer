@@ -9,7 +9,9 @@ pub enum PlotContent {
     Svg(String),   // raw SVG
     Plotly(String), // JSON payload
     Vega(String),  // JSON payload (Vega/Vega-Lite)
-    Html(String),  // raw HTML fallback
+    Html(String),      // raw HTML fallback
+    ArrowIpc(String),  // base64-encoded Arrow IPC streaming format
+    Csv(String),       // raw CSV text
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
