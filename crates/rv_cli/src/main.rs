@@ -50,7 +50,7 @@ enum Command {
     Send {
         /// File to send (reads stdin if omitted)
         file: Option<PathBuf>,
-        /// Content type override: png, svg, plotly, vega, html
+        /// Content type override: png, svg, plotly, vega, html, csv, arrow
         #[arg(long, value_name = "TYPE")]
         r#type: Option<String>,
     },
@@ -365,7 +365,17 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
             let escaped = serde_json::to_string(&text)?;
             format!(r#"{{"type":"Html","data":{}}}"#, escaped)
         }
-        other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html", other),
+        "csv" => {
+            let text = String::from_utf8(data)
+                .context("CSV data is not valid UTF-8")?;
+            let escaped = serde_json::to_string(&text)?;
+            format!(r#"{{"type":"Csv","data":{}}}"#, escaped)
+        }
+        "arrow" => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            format!(r#"{{"type":"ArrowIpc","data":"{}"}}"#, encoded)
+        }
+        other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html, csv, arrow", other),
     };
 
     // Build full payload
@@ -403,6 +413,8 @@ fn detect_from_extension(path: &PathBuf, data: &[u8]) -> String {
         Some("svg") => "svg".to_string(),
         Some("html" | "htm") => "html".to_string(),
         Some("json") => detect_json_type(data),
+        Some("csv" | "tsv") => "csv".to_string(),
+        Some("arrow" | "ipc") => "arrow".to_string(),
         _ => detect_from_content(data), // unknown extension: sniff content
     }
 }
@@ -411,6 +423,16 @@ fn detect_from_content(data: &[u8]) -> String {
     // PNG magic bytes
     if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         return "png".to_string();
+    }
+
+    // Arrow IPC file format magic: "ARROW1" followed by padding
+    if data.starts_with(b"ARROW1") {
+        return "arrow".to_string();
+    }
+
+    // Arrow IPC streaming format: starts with continuation indicator 0xFFFFFFFF
+    if data.len() >= 8 && data[0..4] == [0xFF, 0xFF, 0xFF, 0xFF] {
+        return "arrow".to_string();
     }
 
     // Try as UTF-8 text
