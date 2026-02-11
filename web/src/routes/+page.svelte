@@ -151,10 +151,13 @@
 				activeId = parsed.id;
 				await tick();
 				if (historyEl) {
+					// Only auto-scroll if user is already near the end
 					if (thumbIsVertical) {
-						historyEl.scrollTop = historyEl.scrollHeight;
+						const nearBottom = historyEl.scrollTop + historyEl.clientHeight >= historyEl.scrollHeight - 80;
+						if (nearBottom) historyEl.scrollTop = historyEl.scrollHeight;
 					} else {
-						historyEl.scrollLeft = historyEl.scrollWidth;
+						const nearEnd = historyEl.scrollLeft + historyEl.clientWidth >= historyEl.scrollWidth - 80;
+						if (nearEnd) historyEl.scrollLeft = historyEl.scrollWidth;
 					}
 				}
 				if (parsed.content.type === 'Plotly' || parsed.content.type === 'Vega') {
