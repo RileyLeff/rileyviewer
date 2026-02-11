@@ -7,6 +7,7 @@
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ExportMenu from '$lib/components/ExportMenu.svelte';
 	import CompareGrid from '$lib/components/CompareGrid.svelte';
+	import FilterBar from '$lib/components/FilterBar.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 	import type { PlotContent, PlotMessage, MetadataUpdate } from '$lib/types';
@@ -56,6 +57,30 @@
 	let comparePlots = $derived(
 		compareIds.map((id) => plots.find((p) => p.id === id)).filter((p): p is PlotMessage => !!p)
 	);
+
+	// Filter state
+	let activeTag: string | null = $state(null);
+	let searchQuery = $state('');
+
+	let filteredPlots = $derived.by(() => {
+		let result = plots;
+		if (activeTag) {
+			result = result.filter((p) => p.tags?.includes(activeTag!));
+		}
+		if (searchQuery.trim()) {
+			const q = searchQuery.trim().toLowerCase();
+			result = result.filter((p) => {
+				if (p.title?.toLowerCase().includes(q)) return true;
+				if (p.notes?.toLowerCase().includes(q)) return true;
+				if (p.tags?.some((t) => t.toLowerCase().includes(q))) return true;
+				return false;
+			});
+		}
+		return result;
+	});
+
+	let hasAnyTags = $derived(plots.some((p) => p.tags && p.tags.length > 0));
+	let showFilterBar = $derived(hasAnyTags || searchQuery.length > 0);
 
 	function toggleCompare(id: string) {
 		const idx = compareIds.indexOf(id);
@@ -407,9 +432,9 @@
 			case 'ArrowLeft':
 			case 'ArrowUp': {
 				e.preventDefault();
-				const idx = plots.findIndex((p) => p.id === activeId);
+				const idx = filteredPlots.findIndex((p) => p.id === activeId);
 				if (idx > 0) {
-					activeId = plots[idx - 1].id;
+					activeId = filteredPlots[idx - 1].id;
 					scrollActiveIntoView();
 				}
 				break;
@@ -417,25 +442,25 @@
 			case 'ArrowRight':
 			case 'ArrowDown': {
 				e.preventDefault();
-				const idx = plots.findIndex((p) => p.id === activeId);
-				if (idx >= 0 && idx < plots.length - 1) {
-					activeId = plots[idx + 1].id;
+				const idx = filteredPlots.findIndex((p) => p.id === activeId);
+				if (idx >= 0 && idx < filteredPlots.length - 1) {
+					activeId = filteredPlots[idx + 1].id;
 					scrollActiveIntoView();
 				}
 				break;
 			}
 			case 'Home': {
 				e.preventDefault();
-				if (plots.length > 0) {
-					activeId = plots[0].id;
+				if (filteredPlots.length > 0) {
+					activeId = filteredPlots[0].id;
 					scrollActiveIntoView();
 				}
 				break;
 			}
 			case 'End': {
 				e.preventDefault();
-				if (plots.length > 0) {
-					activeId = plots.at(-1)!.id;
+				if (filteredPlots.length > 0) {
+					activeId = filteredPlots.at(-1)!.id;
 					scrollActiveIntoView();
 				}
 				break;
@@ -654,12 +679,12 @@
 {/snippet}
 
 {#snippet thumbStrip()}
-	{#if plots.length === 0}
+	{#if filteredPlots.length === 0}
 		<div class={`flex-none text-xs text-[var(--color-text-faint)] py-4 px-2`}>
-			waiting for plots...
+			{plots.length === 0 ? 'waiting for plots...' : 'no matching plots'}
 		</div>
 	{:else}
-		{#each plots as plot (plot.id)}
+		{#each filteredPlots as plot (plot.id)}
 			{@const thumbSrc = getThumbnailSrc(plot)}
 			{@const compareIdx = compareIds.indexOf(plot.id)}
 			<button
@@ -760,6 +785,16 @@
 		<div class="flex-none border-b border-[var(--color-error)] bg-[var(--color-error-muted)] px-4 py-2 text-sm text-[var(--color-error)]">
 			error: {error}
 		</div>
+	{/if}
+
+	{#if showFilterBar}
+		<FilterBar
+			plots={plots}
+			{activeTag}
+			{searchQuery}
+			ontagclick={(tag) => { activeTag = tag; }}
+			onsearch={(q) => { searchQuery = q; }}
+		/>
 	{/if}
 
 	<div class={`flex-1 min-h-0 flex ${thumbIsVertical ? 'flex-row' : 'flex-col'}`}>
