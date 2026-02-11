@@ -250,10 +250,12 @@ fn status() -> Result<()> {
             } else {
                 println!("Server not running (stale state file)");
                 remove_state();
+                std::process::exit(1);
             }
         }
         None => {
             println!("Server not running");
+            std::process::exit(1);
         }
     }
     Ok(())
