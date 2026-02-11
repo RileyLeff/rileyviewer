@@ -4,17 +4,25 @@
 
 	interface Props {
 		content: PlotContent;
+		onexport?: (msg: string) => void;
 	}
 
-	let { content }: Props = $props();
+	let { content, onexport }: Props = $props();
 
 	let open = $state(false);
+	let exportError: string | null = $state(null);
 
 	function handleClickOutside(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		if (!target.closest('.export-menu')) {
 			open = false;
+			exportError = null;
 		}
+	}
+
+	function timestamp(): string {
+		const d = new Date();
+		return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
 	}
 
 	function downloadBlob(blob: Blob, filename: string) {
@@ -24,6 +32,7 @@
 		a.download = filename;
 		a.click();
 		setTimeout(() => URL.revokeObjectURL(url), 60000);
+		onexport?.(`exported ${filename}`);
 	}
 
 	function exportPng() {
@@ -32,31 +41,32 @@
 		for (let i = 0; i < binary.length; i++) {
 			bytes[i] = binary.charCodeAt(i);
 		}
-		downloadBlob(new Blob([bytes], { type: 'image/png' }), 'plot.png');
+		downloadBlob(new Blob([bytes], { type: 'image/png' }), `plot-${timestamp()}.png`);
 		open = false;
 	}
 
 	function exportSvg() {
-		downloadBlob(new Blob([content.data], { type: 'image/svg+xml' }), 'plot.svg');
+		downloadBlob(new Blob([content.data], { type: 'image/svg+xml' }), `plot-${timestamp()}.svg`);
 		open = false;
 	}
 
 	function exportJson() {
-		downloadBlob(new Blob([content.data], { type: 'application/json' }), 'plot.json');
+		downloadBlob(new Blob([content.data], { type: 'application/json' }), `plot-${timestamp()}.json`);
 		open = false;
 	}
 
 	function exportHtml() {
-		downloadBlob(new Blob([content.data], { type: 'text/html' }), 'plot.html');
+		downloadBlob(new Blob([content.data], { type: 'text/html' }), `plot-${timestamp()}.html`);
 		open = false;
 	}
 
 	function exportCsv() {
-		downloadBlob(new Blob([content.data], { type: 'text/csv' }), 'data.csv');
+		downloadBlob(new Blob([content.data], { type: 'text/csv' }), `data-${timestamp()}.csv`);
 		open = false;
 	}
 
 	function exportArrowAsCsv() {
+		exportError = null;
 		try {
 			const binary = atob(content.data);
 			const bytes = new Uint8Array(binary.length);
@@ -78,23 +88,24 @@
 				});
 				rows.push(row.join(','));
 			}
-			downloadBlob(new Blob([rows.join('\n')], { type: 'text/csv' }), 'data.csv');
+			downloadBlob(new Blob([rows.join('\n')], { type: 'text/csv' }), `data-${timestamp()}.csv`);
+			open = false;
 		} catch (e) {
 			console.error('Failed to convert Arrow IPC to CSV:', e);
+			exportError = 'conversion failed';
 		}
-		open = false;
 	}
 </script>
 
 <svelte:window
 	onclick={open ? handleClickOutside : undefined}
-	onkeydown={open ? (e) => { if (e.key === 'Escape') open = false; } : undefined}
+	onkeydown={open ? (e) => { if (e.key === 'Escape') { open = false; exportError = null; } } : undefined}
 />
 
 <div class="relative export-menu">
 	<button
 		class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-		onclick={(e) => { e.stopPropagation(); open = !open; }}
+		onclick={(e) => { e.stopPropagation(); open = !open; exportError = null; }}
 	>[export]</button>
 
 	{#if open}
@@ -138,6 +149,10 @@
 					class="w-full text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] py-1 transition-colors"
 					onclick={exportCsv}
 				>[CSV (original)]</button>
+			{/if}
+
+			{#if exportError}
+				<div class="text-[10px] text-[var(--color-error)] mt-1">{exportError}</div>
 			{/if}
 		</div>
 	{/if}

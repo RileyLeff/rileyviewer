@@ -583,7 +583,7 @@
 				>[clear]</button>
 			{/if}
 			{#if current && !compareMode}
-				<ExportMenu content={current.content} />
+				<ExportMenu content={current.content} onexport={showToast} />
 			{/if}
 			<SettingsMenu />
 			<button
