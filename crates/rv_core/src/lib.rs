@@ -20,6 +20,12 @@ pub struct PlotMessage {
     /// Unix timestamp in milliseconds (safe for JavaScript Number)
     pub timestamp: u64,
     pub content: PlotContent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 impl PlotMessage {
@@ -28,6 +34,25 @@ impl PlotMessage {
             id: Uuid::new_v4().to_string(),
             timestamp: (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as u64,
             content,
+            title: None,
+            notes: None,
+            tags: Vec::new(),
+        }
+    }
+
+    pub fn with_metadata(
+        content: PlotContent,
+        title: Option<String>,
+        notes: Option<String>,
+        tags: Vec<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            timestamp: (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as u64,
+            content,
+            title,
+            notes,
+            tags,
         }
     }
 }
