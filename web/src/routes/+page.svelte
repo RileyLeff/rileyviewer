@@ -490,6 +490,84 @@
 			console.error('Failed to render Vega chart:', e);
 		}
 	}
+
+	let batchExporting = $state(false);
+
+	async function batchExport() {
+		const selectedPlots = compareIds
+			.map((id) => plots.find((p) => p.id === id))
+			.filter((p): p is PlotMessage => !!p);
+		if (selectedPlots.length === 0) return;
+
+		batchExporting = true;
+		try {
+			const JSZip = (await import('jszip')).default;
+			const zip = new JSZip();
+			const ts = new Date();
+			const tsStr = `${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}-${String(ts.getHours()).padStart(2, '0')}${String(ts.getMinutes()).padStart(2, '0')}${String(ts.getSeconds()).padStart(2, '0')}`;
+
+			for (let i = 0; i < selectedPlots.length; i++) {
+				const plot = selectedPlots[i];
+				const idx = String(i + 1).padStart(2, '0');
+				const c = plot.content;
+
+				if (c.type === 'Png') {
+					const binary = atob(c.data);
+					const bytes = new Uint8Array(binary.length);
+					for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+					zip.file(`${idx}-plot.png`, bytes);
+				} else if (c.type === 'Svg') {
+					zip.file(`${idx}-plot.svg`, c.data);
+				} else if (c.type === 'Plotly') {
+					zip.file(`${idx}-plot.json`, c.data);
+				} else if (c.type === 'Vega') {
+					zip.file(`${idx}-plot.json`, c.data);
+				} else if (c.type === 'Html') {
+					zip.file(`${idx}-plot.html`, c.data);
+				} else if (c.type === 'Csv') {
+					zip.file(`${idx}-data.csv`, c.data);
+				} else if (c.type === 'ArrowIpc') {
+					// Convert Arrow to CSV for zip
+					try {
+						const { tableFromIPC } = await import('apache-arrow');
+						const bin = atob(c.data);
+						const bytes = new Uint8Array(bin.length);
+						for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+						const table = tableFromIPC(bytes);
+						const cols = table.schema.fields.map((f) => f.name);
+						const rows = [cols.join(',')];
+						for (let r = 0; r < table.numRows; r++) {
+							rows.push(cols.map((col) => {
+								const v = table.getChild(col)?.get(r);
+								if (v == null) return '';
+								const s = String(v);
+								return s.includes(',') || s.includes('"') || s.includes('\n')
+									? `"${s.replace(/"/g, '""')}"` : s;
+							}).join(','));
+						}
+						zip.file(`${idx}-data.csv`, rows.join('\n'));
+					} catch {
+						// Fallback: include raw base64
+						zip.file(`${idx}-data.arrow.b64`, c.data);
+					}
+				}
+			}
+
+			const blob = await zip.generateAsync({ type: 'blob' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `rileyviewer-${tsStr}.zip`;
+			a.click();
+			setTimeout(() => URL.revokeObjectURL(url), 60000);
+			showToast(`exported ${selectedPlots.length} plots as zip`);
+		} catch (e) {
+			console.error('Batch export failed:', e);
+			showToast('batch export failed');
+		} finally {
+			batchExporting = false;
+		}
+	}
 </script>
 
 {#snippet stickerImg()}
@@ -584,6 +662,13 @@
 					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-faint)] hover:border-[var(--color-text-faint)] transition-colors"
 					onclick={() => { compareIds = []; }}
 				>[clear]</button>
+			{/if}
+			{#if compareIds.length >= 2}
+				<button
+					class="border border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent)] hover:bg-[var(--color-accent-muted)] transition-colors disabled:opacity-50"
+					onclick={batchExport}
+					disabled={batchExporting}
+				>[{batchExporting ? 'zipping...' : `export ${compareIds.length} as zip`}]</button>
 			{/if}
 			{#if current && !compareMode}
 				<ExportMenu content={current.content} onexport={showToast} />
