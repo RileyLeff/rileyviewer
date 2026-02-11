@@ -80,6 +80,21 @@
 		}
 	});
 
+	// Clean up Plotly/Vega when switching away from those content types.
+	// Reads current?.content.type as dependency; fires cleanup for the
+	// renderer that's no longer active. Writes only to plain let vars.
+	$effect(() => {
+		const type = current?.content.type;
+		if (type !== 'Plotly') {
+			plotlyCleanup?.();
+			plotlyCleanup = null;
+		}
+		if (type !== 'Vega') {
+			vegaCleanup?.();
+			vegaCleanup = null;
+		}
+	});
+
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let reconnectAttempt = $state(0);
 	let authFailed = $state(false); // stop retrying after auth rejection
