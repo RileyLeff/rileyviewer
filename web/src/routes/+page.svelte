@@ -168,13 +168,26 @@
 			}
 		});
 
-		socket.addEventListener('close', (e) => {
+		socket.addEventListener('close', async (e) => {
 			if (gen !== socketGeneration) return; // stale socket, ignore
-			// If socket never opened and closed with 1006, likely auth rejection (server returned 401)
+			// If socket never opened and closed with 1006, could be auth rejection
+			// or a transient network failure. Probe /health to distinguish.
 			if (!didOpen && e.code === 1006) {
-				authFailed = true;
-				status = 'error';
-				error = 'Connection rejected — check token';
+				try {
+					const healthUrl = `${$page.url.protocol}//${$page.url.host}/health`;
+					const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(2000) });
+					if (resp.ok) {
+						// Server is up but rejected our WS — auth failure
+						authFailed = true;
+						status = 'error';
+						error = 'Connection rejected — check token';
+						return;
+					}
+				} catch {
+					// Server unreachable — transient failure, retry
+				}
+				status = 'closed';
+				scheduleReconnect();
 				return;
 			}
 			status = 'closed';
