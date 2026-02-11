@@ -65,10 +65,17 @@ def _addrs_match(a: str, b: str, port: int) -> bool:
     return h1 in _LOCALHOST_ALIASES and h2 in _LOCALHOST_ALIASES
 
 
+def _format_host(host: str) -> str:
+    """Wrap IPv6 addresses in brackets for URL construction."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
 def _check_server_running(host: str, port: int) -> bool:
     """Check if a server is running on the given host:port."""
     try:
-        url = f"http://{host}:{port}/health"
+        url = f"http://{_format_host(host)}:{port}/health"
         with urllib.request.urlopen(url, timeout=0.5) as resp:
             return resp.status == 200
     except (urllib.error.URLError, TimeoutError, OSError):
@@ -120,7 +127,7 @@ class Viewer:
 
     def _http_publish(self, content: dict, max_retries: int = 3) -> str:
         """Publish via HTTP POST with retry logic for transient failures."""
-        url = f"http://{self._host}:{self._port}/api/publish"
+        url = f"http://{_format_host(self._host)}:{self._port}/api/publish"
         payload = {"content": content}
         if self._token:
             payload["token"] = self._token
