@@ -373,6 +373,15 @@ fn send_data_to_server(
         detect_from_content(data)
     };
 
+    // Convert TSV to CSV before building content JSON
+    let converted;
+    let data = if content_type == "csv" && is_tsv(data, filename) {
+        converted = tsv_to_csv(data)?;
+        &converted
+    } else {
+        data
+    };
+
     // Build content JSON
     let content_json = build_content_json(&content_type, data)?;
 
@@ -722,4 +731,56 @@ fn detect_json_type(data: &[u8]) -> String {
         }
     }
     "vega".to_string() // default JSON → Vega
+}
+
+/// Check if data is likely TSV (based on file extension).
+fn is_tsv(data: &[u8], filename: Option<&str>) -> bool {
+    if let Some(name) = filename {
+        let lower = name.to_lowercase();
+        if lower.ends_with(".tsv") {
+            return true;
+        }
+    }
+    // No extension hint: check if first line has tabs but no commas
+    if let Ok(text) = std::str::from_utf8(data) {
+        if let Some(first_line) = text.lines().next() {
+            return first_line.contains('\t') && !first_line.contains(',');
+        }
+    }
+    false
+}
+
+/// Convert TSV data to CSV. Handles quoting of fields that contain commas.
+fn tsv_to_csv(data: &[u8]) -> Result<Vec<u8>> {
+    let text = String::from_utf8(data.to_vec())
+        .context("TSV data is not valid UTF-8")?;
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        for (j, field) in line.split('\t').enumerate() {
+            if j > 0 {
+                out.push(',');
+            }
+            // Quote field if it contains comma, double-quote, or newline
+            if field.contains(',') || field.contains('"') || field.contains('\n') {
+                out.push('"');
+                for ch in field.chars() {
+                    if ch == '"' {
+                        out.push_str("\"\"");
+                    } else {
+                        out.push(ch);
+                    }
+                }
+                out.push('"');
+            } else {
+                out.push_str(field);
+            }
+        }
+    }
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out.into_bytes())
 }
