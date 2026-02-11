@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use base64::Engine;
@@ -53,6 +56,17 @@ enum Command {
         /// Content type override: png, svg, plotly, vega, html, csv, arrow
         #[arg(long, value_name = "TYPE")]
         r#type: Option<String>,
+    },
+    /// Watch a directory and auto-send new/modified files
+    Watch {
+        /// Directory or file to watch
+        path: PathBuf,
+        /// Content type override for all files
+        #[arg(long, value_name = "TYPE")]
+        r#type: Option<String>,
+        /// Send existing matching files on startup
+        #[arg(long)]
+        existing: bool,
     },
 }
 
@@ -125,6 +139,7 @@ async fn main() -> Result<()> {
         Command::Stop => stop()?,
         Command::Open => open()?,
         Command::Send { file, r#type } => send(file, r#type)?,
+        Command::Watch { path, r#type, existing } => watch(path, r#type, existing).await?,
     }
     Ok(())
 }
@@ -428,6 +443,186 @@ fn build_content_json(content_type: &str, data: &[u8]) -> Result<String> {
         }
         other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html, csv, arrow", other),
     }
+}
+
+/// File extensions that the watcher will auto-send.
+const WATCH_EXTENSIONS: &[&str] = &[
+    "png", "svg", "html", "htm", "json", "csv", "tsv", "arrow", "ipc",
+];
+
+fn has_supported_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| WATCH_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool) -> Result<()> {
+    use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+
+    let state = read_state().context("No server running. Start one with: rileyviewer serve")?;
+    if !check_server_running(&state.addr) {
+        bail!("Server not running at {}. Start one with: rileyviewer serve", state.addr);
+    }
+
+    let canonical = fs::canonicalize(&path)
+        .with_context(|| format!("path not found: {}", path.display()))?;
+
+    let (watch_path, mode) = if canonical.is_dir() {
+        (canonical.clone(), RecursiveMode::Recursive)
+    } else if canonical.is_file() {
+        // Watch the parent directory and filter to this file
+        let parent = canonical.parent()
+            .context("cannot determine parent directory")?
+            .to_path_buf();
+        (parent, RecursiveMode::NonRecursive)
+    } else {
+        bail!("Path is neither a file nor directory: {}", path.display());
+    };
+
+    // Send existing files if requested
+    if send_existing && canonical.is_dir() {
+        send_existing_files(&canonical, type_override.as_deref(), &state.addr, state.token.as_deref())?;
+    }
+
+    println!("Watching {} for changes... (Ctrl+C to stop)", canonical.display());
+
+    // Set up filesystem watcher with a channel
+    let (tx, rx) = mpsc::channel();
+    let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
+    watcher.watch(&watch_path, mode)?;
+
+    // Debounce: track last send time per path
+    let debounce = Duration::from_millis(500);
+    let mut last_sent: HashMap<PathBuf, Instant> = HashMap::new();
+
+    // Process events until Ctrl+C
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let ctrl_c_handle = tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        let _ = shutdown_tx.send(());
+    });
+
+    loop {
+        // Non-blocking check for shutdown
+        if shutdown_rx.try_recv().is_ok() {
+            break;
+        }
+
+        // Check for filesystem events with timeout
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ok(event)) => {
+                let dominated = matches!(
+                    event.kind,
+                    EventKind::Create(_) | EventKind::Modify(_)
+                );
+                if !dominated {
+                    continue;
+                }
+
+                for event_path in event.paths {
+                    // If watching a single file, filter to that file
+                    if canonical.is_file() && event_path != canonical {
+                        continue;
+                    }
+
+                    // Skip directories, unsupported extensions, temp files
+                    if event_path.is_dir() {
+                        continue;
+                    }
+                    if !has_supported_extension(&event_path)
+                        && type_override.is_none()
+                    {
+                        continue;
+                    }
+                    // Skip hidden/temp files
+                    if let Some(name) = event_path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with('.') || name.ends_with('~') || name.ends_with(".tmp") {
+                            continue;
+                        }
+                    }
+
+                    // Debounce
+                    let now = Instant::now();
+                    if let Some(last) = last_sent.get(&event_path) {
+                        if now.duration_since(*last) < debounce {
+                            continue;
+                        }
+                    }
+
+                    // Read and send
+                    match fs::read(&event_path) {
+                        Ok(data) if !data.is_empty() => {
+                            let filename = event_path.display().to_string();
+                            match send_data_to_server(
+                                &data,
+                                Some(&filename),
+                                type_override.as_deref(),
+                                &state.addr,
+                                state.token.as_deref(),
+                            ) {
+                                Ok((content_type, id)) => {
+                                    println!("Sent {} as {} (id: {})", event_path.display(), content_type, id);
+                                    last_sent.insert(event_path, now);
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to send {}: {}", event_path.display(), e);
+                                }
+                            }
+                        }
+                        Ok(_) => {} // empty file, skip
+                        Err(e) => {
+                            eprintln!("Failed to read {}: {}", event_path.display(), e);
+                        }
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("Watch error: {}", e);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    ctrl_c_handle.abort();
+    println!("\nStopped watching.");
+    Ok(())
+}
+
+fn send_existing_files(
+    dir: &std::path::Path,
+    type_override: Option<&str>,
+    addr: &str,
+    token: Option<&str>,
+) -> Result<()> {
+    let mut entries: Vec<_> = fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let path = e.path();
+            path.is_file() && has_supported_extension(&path)
+        })
+        .collect();
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
+        let path = entry.path();
+        match fs::read(&path) {
+            Ok(data) if !data.is_empty() => {
+                let filename = path.display().to_string();
+                match send_data_to_server(&data, Some(&filename), type_override, addr, token) {
+                    Ok((content_type, id)) => {
+                        println!("Sent {} as {} (id: {})", path.display(), content_type, id);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to send {}: {}", path.display(), e);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn detect_from_extension(path: &PathBuf, data: &[u8]) -> String {

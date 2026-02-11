@@ -1,15 +1,19 @@
-"""Integration tests for the CLI send command."""
+"""Integration tests for the CLI send and watch commands."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
+import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
+import websockets
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BINARY = PROJECT_ROOT / "target" / "release" / "rileyviewer"
@@ -146,13 +150,123 @@ class TestCliContentDetection:
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
 
+class TestCliWatch:
+    @pytest.mark.asyncio
+    async def test_watch_sends_new_file(self, server):
+        """Write a file into a watched directory and verify it arrives via WS."""
+        watch_dir = tempfile.mkdtemp()
+
+        # Start watcher in background
+        proc = subprocess.Popen(
+            [str(BINARY), "watch", watch_dir],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_env(server),
+        )
+        try:
+            # Give watcher time to start
+            time.sleep(1)
+
+            # Connect WebSocket to receive the plot
+            async with websockets.connect(server.ws_url) as ws:
+                await _drain(ws)
+
+                # Write an SVG file into the watched directory
+                svg_path = os.path.join(watch_dir, "test.svg")
+                with open(svg_path, "w") as f:
+                    f.write('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>')
+
+                # Wait for the watcher to pick it up and send it
+                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                data = json.loads(msg)
+                assert data["content"]["type"] == "Svg"
+                assert "<rect" in data["content"]["data"]
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_watch_ignores_unsupported_extension(self, server):
+        """Files with unsupported extensions should not be sent."""
+        watch_dir = tempfile.mkdtemp()
+
+        proc = subprocess.Popen(
+            [str(BINARY), "watch", watch_dir],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_env(server),
+        )
+        try:
+            time.sleep(1)
+
+            async with websockets.connect(server.ws_url) as ws:
+                await _drain(ws)
+
+                # Write an unsupported file type
+                txt_path = os.path.join(watch_dir, "notes.txt")
+                with open(txt_path, "w") as f:
+                    f.write("this should be ignored")
+
+                # Then write a supported file so we know the watcher is alive
+                csv_path = os.path.join(watch_dir, "data.csv")
+                with open(csv_path, "w") as f:
+                    f.write("x,y\n1,2\n")
+
+                # We should get the CSV but NOT the txt
+                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                data = json.loads(msg)
+                assert data["content"]["type"] == "Csv"
+
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_watch_existing_flag(self, server):
+        """--existing should send pre-existing files on startup."""
+        watch_dir = tempfile.mkdtemp()
+
+        # Write a file BEFORE starting the watcher
+        html_path = os.path.join(watch_dir, "pre-existing.html")
+        with open(html_path, "w") as f:
+            f.write("<p>already here</p>")
+
+        # Connect WebSocket BEFORE starting watcher so we don't miss the send
+        async with websockets.connect(server.ws_url) as ws:
+            await _drain(ws)
+
+            proc = subprocess.Popen(
+                [str(BINARY), "watch", "--existing", watch_dir],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=_env(server),
+            )
+            try:
+                # Should receive the pre-existing file
+                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                data = json.loads(msg)
+                assert data["content"]["type"] == "Html"
+                assert "already here" in data["content"]["data"]
+            finally:
+                proc.terminate()
+                proc.wait(timeout=5)
+
+
+async def _drain(ws) -> None:
+    """Drain all pending history messages."""
+    while True:
+        try:
+            await asyncio.wait_for(ws.recv(), timeout=0.5)
+        except asyncio.TimeoutError:
+            break
+
+
 def _env(server) -> dict:
     """Build env dict pointing the CLI at the test server.
 
     The server fixture already wrote its state file under server.home_dir,
     so we just set HOME to that directory.
     """
-    import os
     env = os.environ.copy()
     env["HOME"] = server.home_dir
     return env
