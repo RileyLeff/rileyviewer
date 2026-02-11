@@ -125,12 +125,26 @@ class Viewer:
     def token(self) -> Optional[str]:
         return self._token
 
-    def _http_publish(self, content: dict, max_retries: int = 3) -> str:
+    def _http_publish(
+        self,
+        content: dict,
+        *,
+        title: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+        max_retries: int = 3,
+    ) -> str:
         """Publish via HTTP POST with retry logic for transient failures."""
         url = f"http://{_format_host(self._host)}:{self._port}/api/publish"
         payload = {"content": content}
         if self._token:
             payload["token"] = self._token
+        if title is not None:
+            payload["title"] = title
+        if notes is not None:
+            payload["notes"] = notes
+        if tags is not None:
+            payload["tags"] = tags
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -176,6 +190,10 @@ class Viewer:
         self,
         obj: Any,
         format: Optional[MatplotlibFormat] = None,
+        *,
+        title: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[list[str]] = None,
     ) -> str:
         """Serialize a plotting object and send it to the server.
 
@@ -190,41 +208,109 @@ class Viewer:
             format: For matplotlib figures, the output format ("svg" or "png").
                     Defaults to the viewer's default_format (which defaults to "svg").
                     Ignored for animations (always HTML) and other plot types.
+            title: Optional title for the plot.
+            notes: Optional notes/description.
+            tags: Optional list of tags.
 
         Returns:
             The plot ID assigned by the server.
         """
-        return adapters.send_object_http(self, obj, format=format)
+        return adapters.send_object_http(
+            self, obj, format=format, title=title, notes=notes, tags=tags
+        )
 
-    def send_png_bytes(self, data: bytes) -> str:
+    def send_png_bytes(
+        self, data: bytes, *, title: Optional[str] = None, notes: Optional[str] = None, tags: Optional[list[str]] = None
+    ) -> str:
         """Send raw PNG bytes to the server."""
         encoded = base64.b64encode(data).decode("ascii")
-        return self._http_publish({"type": "Png", "data": encoded})
+        return self._http_publish({"type": "Png", "data": encoded}, title=title, notes=notes, tags=tags)
 
-    def send_svg(self, svg: str) -> str:
+    def send_svg(
+        self, svg: str, *, title: Optional[str] = None, notes: Optional[str] = None, tags: Optional[list[str]] = None
+    ) -> str:
         """Send raw SVG string to the server."""
-        return self._http_publish({"type": "Svg", "data": svg})
+        return self._http_publish({"type": "Svg", "data": svg}, title=title, notes=notes, tags=tags)
 
-    def send_plotly_json(self, payload: str) -> str:
+    def send_plotly_json(
+        self, payload: str, *, title: Optional[str] = None, notes: Optional[str] = None, tags: Optional[list[str]] = None
+    ) -> str:
         """Send Plotly JSON to the server."""
-        return self._http_publish({"type": "Plotly", "data": payload})
+        return self._http_publish({"type": "Plotly", "data": payload}, title=title, notes=notes, tags=tags)
 
-    def send_vega_json(self, payload: str) -> str:
+    def send_vega_json(
+        self, payload: str, *, title: Optional[str] = None, notes: Optional[str] = None, tags: Optional[list[str]] = None
+    ) -> str:
         """Send Vega/Vega-Lite JSON to the server."""
-        return self._http_publish({"type": "Vega", "data": payload})
+        return self._http_publish({"type": "Vega", "data": payload}, title=title, notes=notes, tags=tags)
 
-    def send_html(self, html: str) -> str:
+    def send_html(
+        self, html: str, *, title: Optional[str] = None, notes: Optional[str] = None, tags: Optional[list[str]] = None
+    ) -> str:
         """Send raw HTML to the server."""
-        return self._http_publish({"type": "Html", "data": html})
+        return self._http_publish({"type": "Html", "data": html}, title=title, notes=notes, tags=tags)
 
-    def send_arrow_ipc(self, data: bytes) -> str:
+    def send_arrow_ipc(
+        self, data: bytes, *, title: Optional[str] = None, notes: Optional[str] = None, tags: Optional[list[str]] = None
+    ) -> str:
         """Send Arrow IPC bytes to the server for table rendering."""
         encoded = base64.b64encode(data).decode("ascii")
-        return self._http_publish({"type": "ArrowIpc", "data": encoded})
+        return self._http_publish({"type": "ArrowIpc", "data": encoded}, title=title, notes=notes, tags=tags)
 
-    def send_csv(self, csv_text: str) -> str:
+    def send_csv(
+        self, csv_text: str, *, title: Optional[str] = None, notes: Optional[str] = None, tags: Optional[list[str]] = None
+    ) -> str:
         """Send CSV text to the server for table rendering."""
-        return self._http_publish({"type": "Csv", "data": csv_text})
+        return self._http_publish({"type": "Csv", "data": csv_text}, title=title, notes=notes, tags=tags)
+
+    def update_metadata(
+        self,
+        plot_id: str,
+        *,
+        title: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+    ) -> dict:
+        """Update metadata on an existing plot.
+
+        Args:
+            plot_id: The plot ID returned from a previous send/show call.
+            title: New title (or None to clear, omit to leave unchanged).
+            notes: New notes (or None to clear, omit to leave unchanged).
+            tags: New tag list (omit to leave unchanged).
+
+        Returns:
+            Dict with updated id, title, notes, tags.
+        """
+        url = f"http://{_format_host(self._host)}:{self._port}/api/plots/{plot_id}/metadata"
+        payload: dict = {}
+        if self._token:
+            payload["token"] = self._token
+        if title is not None:
+            payload["title"] = title
+        if notes is not None:
+            payload["notes"] = notes
+        if tags is not None:
+            payload["tags"] = tags
+
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="PATCH",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status != 200:
+                    raise ServerConnectionError(f"Server returned HTTP {resp.status}")
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise ValueError(f"Plot {plot_id!r} not found") from e
+            raise ServerConnectionError(f"Server error: HTTP {e.code}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ServerConnectionError(f"Failed to update metadata: {e}") from e
 
     def capture(self) -> "MatplotlibContext":
         return MatplotlibContext(self)
@@ -240,12 +326,18 @@ class MatplotlibContext:
     def __enter__(self) -> "MatplotlibContext":
         return self
 
-    def push(self) -> str:
+    def push(
+        self,
+        *,
+        title: Optional[str] = None,
+        notes: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+    ) -> str:
         import matplotlib.pyplot as plt
 
         fig = plt.gcf()
         self._captured_figures.append(fig)
-        return self.viewer.show(fig)
+        return self.viewer.show(fig, title=title, notes=notes, tags=tags)
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         import matplotlib.pyplot as plt

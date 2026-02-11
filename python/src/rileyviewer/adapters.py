@@ -46,6 +46,10 @@ def send_object_http(
     viewer,
     obj: Any,
     format: Optional[MatplotlibFormat] = None,
+    *,
+    title: Optional[str] = None,
+    notes: Optional[str] = None,
+    tags: Optional[list] = None,
 ) -> str:
     """HTTP-based serializer dispatch for client mode.
 
@@ -54,55 +58,59 @@ def send_object_http(
         obj: The plot object to serialize and send.
         format: For matplotlib figures, the output format ("svg" or "png").
                 Defaults to viewer's default_format (which defaults to "svg").
+        title: Optional title for the plot.
+        notes: Optional notes/description.
+        tags: Optional list of tags.
     """
+    meta = {"title": title, "notes": notes, "tags": tags}
     # Resolve format from viewer default if not specified
     fmt = format or getattr(viewer, "_default_format", "svg")
 
     # matplotlib animations (FuncAnimation, ArtistAnimation)
     if _is_matplotlib_animation(obj):
-        return _send_matplotlib_animation_http(viewer, obj)
+        return _send_matplotlib_animation_http(viewer, obj, **meta)
 
     # numpy array of matplotlib Axes (from arviz, seaborn, etc.)
     fig = _extract_figure_from_axes_array(obj)
     if fig is not None:
-        return _send_matplotlib_http(viewer, fig, fmt)
+        return _send_matplotlib_http(viewer, fig, fmt, **meta)
 
     # seaborn often returns an object with a .figure attr
     fig = getattr(obj, "figure", None)
     if fig is not None:
-        return _send_matplotlib_http(viewer, fig, fmt)
+        return _send_matplotlib_http(viewer, fig, fmt, **meta)
 
     # matplotlib Figure or objects exposing savefig
     if hasattr(obj, "savefig"):
-        return _send_matplotlib_http(viewer, obj, fmt)
+        return _send_matplotlib_http(viewer, obj, fmt, **meta)
 
     # plotly
     module = getattr(obj.__class__, "__module__", "") or ""
     if module.startswith("plotly") or hasattr(obj, "to_plotly_json"):
         payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_plotly_json())
-        return viewer.send_plotly_json(payload)
+        return viewer.send_plotly_json(payload, **meta)
 
     # altair / vega-lite (check module name, not just to_dict which is too broad)
     if module.startswith("altair"):
         payload = obj.to_json() if hasattr(obj, "to_json") else json.dumps(obj.to_dict())
-        return viewer.send_vega_json(payload)
+        return viewer.send_vega_json(payload, **meta)
 
     # pandas DataFrame
     if module.startswith("pandas") and hasattr(obj, "to_csv"):
-        return _send_dataframe_http(viewer, obj)
+        return _send_dataframe_http(viewer, obj, **meta)
 
     # polars DataFrame / LazyFrame
     if module.startswith("polars") and hasattr(obj, "to_arrow"):
-        return _send_dataframe_http(viewer, obj)
+        return _send_dataframe_http(viewer, obj, **meta)
 
     # ipy/html fallback
     if hasattr(obj, "_repr_html_"):
-        return viewer.send_html(obj._repr_html_())
+        return viewer.send_html(obj._repr_html_(), **meta)
 
     raise UnsupportedPlotTypeError(type(obj))
 
 
-def _send_dataframe_http(viewer, df: Any) -> str:
+def _send_dataframe_http(viewer, df: Any, **metadata) -> str:
     """Send a DataFrame (pandas or polars) via Arrow IPC, falling back to CSV."""
     try:
         import pyarrow as pa
@@ -123,7 +131,7 @@ def _send_dataframe_http(viewer, df: Any) -> str:
         writer = pa.ipc.new_stream(sink, arrow_table.schema)
         writer.write_table(arrow_table)
         writer.close()
-        return viewer.send_arrow_ipc(sink.getvalue())
+        return viewer.send_arrow_ipc(sink.getvalue(), **metadata)
 
     except ImportError:
         # pyarrow not installed — fall back to CSV
@@ -134,10 +142,10 @@ def _send_dataframe_http(viewer, df: Any) -> str:
             csv_text = df.write_csv()
         else:
             csv_text = df.to_csv(index=False)
-        return viewer.send_csv(csv_text)
+        return viewer.send_csv(csv_text, **metadata)
 
 
-def _send_matplotlib_http(viewer, fig: Any, format: MatplotlibFormat = "svg") -> str:
+def _send_matplotlib_http(viewer, fig: Any, format: MatplotlibFormat = "svg", **metadata) -> str:
     """Send a matplotlib figure via HTTP.
 
     Note: This does NOT close the figure. Use viewer.capture() context manager
@@ -147,16 +155,16 @@ def _send_matplotlib_http(viewer, fig: Any, format: MatplotlibFormat = "svg") ->
     fig.savefig(buf, format=format)
 
     if format == "svg":
-        return viewer.send_svg(buf.getvalue().decode("utf-8"))
+        return viewer.send_svg(buf.getvalue().decode("utf-8"), **metadata)
     else:
-        return viewer.send_png_bytes(buf.getvalue())
+        return viewer.send_png_bytes(buf.getvalue(), **metadata)
 
 
-def _send_matplotlib_animation_http(viewer, anim: Any) -> str:
+def _send_matplotlib_animation_http(viewer, anim: Any, **metadata) -> str:
     """Send a matplotlib animation as interactive HTML via to_jshtml()."""
     html = anim.to_jshtml()
     html = _inject_animation_styles(html)
-    return viewer.send_html(html)
+    return viewer.send_html(html, **metadata)
 
 
 # Custom CSS and JS to style matplotlib animation controls
