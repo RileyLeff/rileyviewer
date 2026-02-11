@@ -62,7 +62,7 @@ def send_object_http(
         notes: Optional notes/description.
         tags: Optional list of tags.
     """
-    meta = {"title": title, "notes": notes, "tags": tags}
+    meta = {k: v for k, v in {"title": title, "notes": notes, "tags": tags}.items() if v is not None}
     # Resolve format from viewer default if not specified
     fmt = format or getattr(viewer, "_default_format", "svg")
 

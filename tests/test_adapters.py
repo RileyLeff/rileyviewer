@@ -282,6 +282,11 @@ class TestAltairDetection:
 # ---------------------------------------------------------------------------
 
 
+_has_pandas = __import__("importlib").util.find_spec("pandas") is not None
+_has_pyarrow = __import__("importlib").util.find_spec("pyarrow") is not None
+
+
+@pytest.mark.skipif(not _has_pandas, reason="pandas not installed")
 class TestPandasDataFrame:
     def test_pandas_sends_arrow_ipc(self, server):
         import pandas as pd
@@ -325,6 +330,7 @@ class TestPandasDataFrame:
 
 
 class TestPolarsDetection:
+    @pytest.mark.skipif(not _has_pyarrow, reason="pyarrow not installed")
     def test_polars_dataframe_detected(self, server):
         import pyarrow as pa
 
@@ -337,6 +343,7 @@ class TestPolarsDetection:
         send_object_http(v, mock_df)
         assert v.calls[0][0] == "send_arrow_ipc"
 
+    @pytest.mark.skipif(not _has_pyarrow, reason="pyarrow not installed")
     def test_polars_lazyframe_collected(self, server):
         import pyarrow as pa
 

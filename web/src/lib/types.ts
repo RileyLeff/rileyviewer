@@ -21,5 +21,5 @@ export type MetadataUpdate = {
 	id: string;
 	title?: string | null;
 	notes?: string | null;
-	tags?: string[];
+	tags: string[];
 };
