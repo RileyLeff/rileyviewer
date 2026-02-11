@@ -163,6 +163,20 @@
 		}
 	});
 
+	// Clean up stale cells when plots are removed from the compare grid.
+	// Diffs active plot IDs against cleanup map; finalizes removed entries.
+	// Only reads `plots` (reactive) and writes to plain let vars.
+	$effect(() => {
+		const activeIds = new Set(plots.map((p) => p.id));
+		for (const id of Object.keys(cleanups)) {
+			if (!activeIds.has(id)) {
+				cleanups[id]?.();
+				delete cleanups[id];
+				delete cellGenerations[id];
+			}
+		}
+	});
+
 	onMount(() => {
 		return () => {
 			// Clean up all Plotly/Vega cells on component unmount
