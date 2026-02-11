@@ -531,6 +531,8 @@ async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool
     // Debounce: track last send time per path
     let debounce = Duration::from_millis(500);
     let mut last_sent: HashMap<PathBuf, Instant> = HashMap::new();
+    let mut last_eviction = Instant::now();
+    let eviction_interval = Duration::from_secs(60);
 
     // Process events until Ctrl+C
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -628,7 +630,13 @@ async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool
             Ok(Err(e)) => {
                 eprintln!("Watch error: {}", e);
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Periodically evict stale debounce entries to bound memory
+                if last_eviction.elapsed() >= eviction_interval {
+                    last_sent.retain(|_, t| t.elapsed() < eviction_interval);
+                    last_eviction = Instant::now();
+                }
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
