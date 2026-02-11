@@ -9,6 +9,7 @@ embed-assets = ["rust-embed", "mime_guess"]
 [dependencies]
 anyhow = { workspace = true }
 axum = { workspace = true }
+futures = { workspace = true }
 rv_config = { path = "../rv_config" }
 rv_core = { path = "../rv_core" }
 rust-embed = { version = "8.5", optional = true }

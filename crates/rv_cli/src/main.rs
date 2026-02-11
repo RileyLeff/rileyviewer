@@ -101,6 +101,13 @@ fn write_state(state: &ServerState) -> Result<()> {
     let path = state_file();
     let tmp_path = dir.join("server.json.tmp");
     let mut file = fs::File::create(&tmp_path).context("failed to create temp state file")?;
+    // Owner-only permissions since file contains auth token
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .context("failed to set state file permissions")?;
+    }
     let json = serde_json::to_string_pretty(state)?;
     file.write_all(json.as_bytes())?;
     file.sync_all().context("failed to flush state file to disk")?;
@@ -596,17 +603,11 @@ fn send_existing_files(
     addr: &str,
     token: Option<&str>,
 ) -> Result<()> {
-    let mut entries: Vec<_> = fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let path = e.path();
-            path.is_file() && has_supported_extension(&path)
-        })
-        .collect();
-    entries.sort_by_key(|e| e.path());
+    let mut paths: Vec<PathBuf> = Vec::new();
+    collect_files_recursive(dir, type_override, &mut paths)?;
+    paths.sort();
 
-    for entry in entries {
-        let path = entry.path();
+    for path in paths {
         match fs::read(&path) {
             Ok(data) if !data.is_empty() => {
                 let filename = path.display().to_string();
@@ -620,6 +621,32 @@ fn send_existing_files(
                 }
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn collect_files_recursive(
+    dir: &std::path::Path,
+    type_override: Option<&str>,
+    out: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, type_override, out)?;
+        } else if path.is_file() {
+            // Skip hidden/temp files
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('.') || name.ends_with('~') || name.ends_with(".tmp") {
+                    continue;
+                }
+            }
+            // When --type is set, accept all files; otherwise filter by extension
+            if type_override.is_some() || has_supported_extension(&path) {
+                out.push(path);
+            }
         }
     }
     Ok(())

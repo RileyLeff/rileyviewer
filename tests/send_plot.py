@@ -11,14 +11,11 @@
 Simple script to send a single plot to the viewer.
 Run this multiple times to see plots accumulate in the same browser window.
 
+Requires a running server:
+    rileyviewer serve
+
 Usage:
     uv run tests/send_plot.py
-
-The first run starts the server (as a background process) and opens the browser.
-Subsequent runs connect to the same server and send plots.
-
-To stop the server:
-    ./target/debug/rileyviewer stop
 """
 
 import os
@@ -38,8 +35,6 @@ from rileyviewer import Viewer
 
 
 def main():
-    # Server runs as a detached background process
-    # First run spawns it, subsequent runs connect to it
     viewer = Viewer()
 
     print(f"Connected to: {viewer.addr}")

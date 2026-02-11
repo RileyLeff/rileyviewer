@@ -30,6 +30,7 @@ use {
     axum::http::{header, Uri},
     rust_embed::RustEmbed,
 };
+use futures::{SinkExt, StreamExt};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -192,7 +193,7 @@ fn build_router(state: PlotState, token: Option<String>, shutdown: ShutdownTx, d
         .route("/ws", get(ws_handler))
         .route("/api/publish", post(publish_handler))
         .route("/api/shutdown", post(shutdown_handler))
-        .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for animations
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
         .with_state((state, token, shutdown))
         .merge(spa)
 }
@@ -218,55 +219,72 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(state, socket))
 }
 
-async fn handle_socket(state: PlotState, mut socket: WebSocket) {
+async fn handle_socket(state: PlotState, socket: WebSocket) {
     // Subscribe BEFORE reading history to avoid missing plots published in between.
     // The client deduplicates by ID, so overlap between history and live messages is fine.
     let mut rx = state.tx.subscribe();
 
+    let (mut sender, mut receiver) = socket.split();
+
     let history = state.history.read().await.clone();
     let history_count = history.len();
-    if let Err(e) = send_history(history, &mut socket).await {
-        warn!("Failed to send {} history items to new WebSocket client: {}", history_count, e);
-        return;
-    }
-    debug!("Sent {} history items to new WebSocket client", history_count);
-    loop {
-        match rx.recv().await {
-            Ok(msg) => {
-                match serde_json::to_string(&msg) {
-                    Ok(text) => {
-                        if let Err(e) = socket.send(Message::Text(text)).await {
-                            debug!("WebSocket client disconnected: {}", e);
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to serialize plot message {}: {}", msg.id, e);
-                    }
-                }
-            }
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                warn!("WebSocket client lagged, skipped {} messages", n);
-            }
-            Err(broadcast::error::RecvError::Closed) => {
-                debug!("Broadcast channel closed");
-                break;
-            }
-        }
-    }
-}
-
-async fn send_history(
-    history: Vec<PlotMessage>,
-    socket: &mut WebSocket,
-) -> Result<(), axum::Error> {
     for msg in history {
         match serde_json::to_string(&msg) {
-            Ok(text) => socket.send(Message::Text(text)).await?,
+            Ok(text) => {
+                if let Err(e) = sender.send(Message::Text(text)).await {
+                    warn!("Failed to send history to new WebSocket client: {}", e);
+                    return;
+                }
+            }
             Err(e) => warn!("Failed to serialize history message {}: {}", msg.id, e),
         }
     }
-    Ok(())
+    debug!("Sent {} history items to new WebSocket client", history_count);
+
+    // Concurrently read from both the broadcast channel and the client socket.
+    // Reading from the client detects disconnects/close frames immediately
+    // instead of waiting for the next send to fail.
+    loop {
+        tokio::select! {
+            msg = rx.recv() => {
+                match msg {
+                    Ok(plot) => {
+                        match serde_json::to_string(&plot) {
+                            Ok(text) => {
+                                if let Err(e) = sender.send(Message::Text(text)).await {
+                                    debug!("WebSocket client disconnected: {}", e);
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to serialize plot message {}: {}", plot.id, e);
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("WebSocket client lagged, skipped {} messages", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        debug!("Broadcast channel closed");
+                        break;
+                    }
+                }
+            }
+            ws_msg = receiver.next() => {
+                match ws_msg {
+                    Some(Ok(Message::Close(_))) | None => {
+                        debug!("WebSocket client closed connection");
+                        break;
+                    }
+                    Some(Ok(_)) => {} // ignore pings, pongs, text from client
+                    Some(Err(e)) => {
+                        debug!("WebSocket client error: {}", e);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Take the oneshot sender and fire it to trigger graceful shutdown.

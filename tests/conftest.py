@@ -129,19 +129,16 @@ def server() -> Generator[ServerInfo, None, None]:
             "--history-limit", "50",
         ],
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
     try:
         _wait_for_health(host, port)
     except RuntimeError:
         proc.kill()
-        stdout, stderr = proc.communicate(timeout=5)
-        pytest.fail(
-            f"Server failed to start on {host}:{port}\n"
-            f"stdout: {stdout.decode()}\nstderr: {stderr.decode()}"
-        )
+        proc.wait(timeout=5)
+        pytest.fail(f"Server failed to start on {host}:{port}")
 
     info = ServerInfo(host, port, token, proc, tmp_home)
     yield info

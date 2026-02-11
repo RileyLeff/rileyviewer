@@ -46,12 +46,15 @@ _LOCALHOST_ALIASES = {"127.0.0.1", "localhost", "0.0.0.0", "::1", "::"}
 def _addrs_match(a: str, b: str, port: int) -> bool:
     """Check if two host:port strings refer to the same local server."""
     def parse(addr: str) -> tuple:
-        # Split host:port, handling IPv6 [::1]:port format
-        if addr.startswith("["):
-            host_part, _, port_part = addr.rpartition("]:")
-            return host_part.strip("[]"), int(port_part) if port_part else port
-        parts = addr.rsplit(":", 1)
-        return parts[0], int(parts[1]) if len(parts) == 2 else port
+        try:
+            # Split host:port, handling IPv6 [::1]:port format
+            if addr.startswith("["):
+                host_part, _, port_part = addr.rpartition("]:")
+                return host_part.strip("[]"), int(port_part) if port_part else port
+            parts = addr.rsplit(":", 1)
+            return parts[0], int(parts[1]) if len(parts) == 2 else port
+        except (ValueError, TypeError):
+            return addr, port
 
     h1, p1 = parse(a)
     h2, p2 = parse(b)

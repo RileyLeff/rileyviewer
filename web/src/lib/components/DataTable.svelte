@@ -13,13 +13,20 @@
 
 	type SortDir = 'asc' | 'desc' | 'none';
 
+	/** Unified parsed data interface: lazy (Arrow) or eager (CSV) */
+	interface ParsedData {
+		columns: string[];
+		rowCount: number;
+		getCell: (row: number, col: number) => any;
+	}
+
 	let sortCol: number | null = $state(null);
 	let sortDir: SortDir = $state('none');
 	let scrollTop = $state(0);
 	let containerHeight = $state(0);
 
-	// Parse data into columns + rows
-	let parsed = $derived.by(() => {
+	// Parse data into columns + lazy cell accessor
+	let parsed: ParsedData = $derived.by(() => {
 		if (format === 'ArrowIpc') {
 			return parseArrow(data);
 		}
@@ -28,8 +35,7 @@
 
 	// Sorted index array — sort indices, not data
 	let sortedIndices = $derived.by(() => {
-		const rowCount = parsed.rows.length;
-		const indices = Array.from({ length: rowCount }, (_, i) => i);
+		const indices = Array.from({ length: parsed.rowCount }, (_, i) => i);
 
 		if (sortCol === null || sortDir === 'none') {
 			return indices;
@@ -37,10 +43,11 @@
 
 		const col = sortCol;
 		const dir = sortDir;
+		const { getCell } = parsed;
 
 		indices.sort((a, b) => {
-			const va = parsed.rows[a][col];
-			const vb = parsed.rows[b][col];
+			const va = getCell(a, col);
+			const vb = getCell(b, col);
 
 			// nulls always sort last
 			const aNull = va == null || (typeof va === 'number' && isNaN(va));
@@ -79,24 +86,33 @@
 	let offsetY = $derived(startIdx * ROW_HEIGHT);
 
 	let visibleRows = $derived(
-		sortedIndices.slice(startIdx, endIdx).map((idx) => ({
-			idx,
-			cells: parsed.rows[idx]
-		}))
+		sortedIndices.slice(startIdx, endIdx).map((idx) => {
+			const cells: any[] = [];
+			for (let ci = 0; ci < parsed.columns.length; ci++) {
+				cells.push(parsed.getCell(idx, ci));
+			}
+			return { idx, cells };
+		})
 	);
 
-	// Detect which columns are numeric
+	// Detect which columns are numeric (sample first 100 rows)
 	let colIsNumeric = $derived.by(() => {
+		const sampleCount = Math.min(parsed.rowCount, 100);
 		return parsed.columns.map((_, ci) => {
-			for (let ri = 0; ri < Math.min(parsed.rows.length, 100); ri++) {
-				const v = parsed.rows[ri][ci];
+			for (let ri = 0; ri < sampleCount; ri++) {
+				const v = parsed.getCell(ri, ci);
 				if (v != null && typeof v !== 'number') return false;
 			}
 			return true;
 		});
 	});
 
-	function parseArrow(b64: string): { columns: string[]; rows: any[][] } {
+	/**
+	 * Parse Arrow IPC (base64-encoded) into a lazy accessor.
+	 * Keeps the Arrow Table reference and reads cells on demand,
+	 * avoiding materialization of all rows into JS arrays.
+	 */
+	function parseArrow(b64: string): ParsedData {
 		try {
 			const binary = atob(b64);
 			const bytes = new Uint8Array(binary.length);
@@ -105,38 +121,133 @@
 			}
 			const table = tableFromIPC(bytes);
 			const columns = table.schema.fields.map((f) => f.name);
-			const rows: any[][] = [];
-			for (let r = 0; r < table.numRows; r++) {
-				const row: any[] = [];
-				for (let c = 0; c < table.numCols; c++) {
-					const col = table.getChildAt(c);
-					row.push(col ? col.get(r) : null);
+			return {
+				columns,
+				rowCount: table.numRows,
+				getCell(row: number, col: number): any {
+					const child = table.getChildAt(col);
+					return child ? child.get(row) : null;
 				}
-				rows.push(row);
-			}
-			return { columns, rows };
+			};
 		} catch (e) {
 			console.error('Failed to parse Arrow IPC:', e);
-			return { columns: ['error'], rows: [[String(e)]] };
+			return {
+				columns: ['error'],
+				rowCount: 1,
+				getCell(): any {
+					return String(e);
+				}
+			};
 		}
 	}
 
-	function parseCsv(text: string): { columns: string[]; rows: any[][] } {
-		const lines = text.split('\n').filter((l) => l.trim().length > 0);
-		if (lines.length === 0) return { columns: [], rows: [] };
-		const columns = lines[0].split(',').map((h) => h.trim());
-		const rows: any[][] = [];
-		for (let i = 1; i < lines.length; i++) {
-			const cells = lines[i].split(',').map((c) => {
+	/**
+	 * Parse CSV text with RFC 4180 basic quoting support.
+	 * - Fields enclosed in double quotes can contain commas and newlines.
+	 * - Double quotes inside quoted fields are escaped as "".
+	 * Materializes rows eagerly (CSV data is already strings, no duplication concern).
+	 */
+	function parseCsv(text: string): ParsedData {
+		const rows = parseCsvRows(text);
+		if (rows.length === 0) {
+			return { columns: [], rowCount: 0, getCell: () => null };
+		}
+		const columns = rows[0].map((h) => h.trim());
+		const dataRows: any[][] = [];
+		for (let i = 1; i < rows.length; i++) {
+			const cells = rows[i].map((c) => {
 				const trimmed = c.trim();
 				if (trimmed === '') return null;
 				const num = Number(trimmed);
 				if (!isNaN(num) && trimmed !== '') return num;
 				return trimmed;
 			});
-			rows.push(cells);
+			dataRows.push(cells);
 		}
-		return { columns, rows };
+		return {
+			columns,
+			rowCount: dataRows.length,
+			getCell(row: number, col: number): any {
+				const r = dataRows[row];
+				return r ? r[col] ?? null : null;
+			}
+		};
+	}
+
+	/**
+	 * Low-level CSV row parser handling RFC 4180 quoting.
+	 * Returns an array of rows, each row an array of raw string fields.
+	 */
+	function parseCsvRows(text: string): string[][] {
+		const rows: string[][] = [];
+		let row: string[] = [];
+		let field = '';
+		let inQuotes = false;
+		let i = 0;
+
+		while (i < text.length) {
+			const ch = text[i];
+
+			if (inQuotes) {
+				if (ch === '"') {
+					// Look ahead: doubled quote is an escaped quote
+					if (i + 1 < text.length && text[i + 1] === '"') {
+						field += '"';
+						i += 2;
+					} else {
+						// End of quoted field
+						inQuotes = false;
+						i++;
+					}
+				} else {
+					field += ch;
+					i++;
+				}
+			} else {
+				if (ch === '"') {
+					inQuotes = true;
+					i++;
+				} else if (ch === ',') {
+					row.push(field);
+					field = '';
+					i++;
+				} else if (ch === '\r') {
+					// Handle \r\n or lone \r as row terminator
+					row.push(field);
+					field = '';
+					if (row.some((f) => f.trim().length > 0)) {
+						rows.push(row);
+					}
+					row = [];
+					if (i + 1 < text.length && text[i + 1] === '\n') {
+						i += 2;
+					} else {
+						i++;
+					}
+				} else if (ch === '\n') {
+					row.push(field);
+					field = '';
+					if (row.some((f) => f.trim().length > 0)) {
+						rows.push(row);
+					}
+					row = [];
+					i++;
+				} else {
+					field += ch;
+					i++;
+				}
+			}
+		}
+
+		// Handle last field/row if file doesn't end with newline
+		if (field.length > 0 || row.length > 0) {
+			row.push(field);
+			if (row.some((f) => f.trim().length > 0)) {
+				rows.push(row);
+			}
+		}
+
+		return rows;
 	}
 
 	function handleSort(colIndex: number) {

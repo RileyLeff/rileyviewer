@@ -86,6 +86,7 @@
 
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let reconnectAttempt = $state(0);
+	let authFailed = $state(false); // stop retrying after auth rejection
 
 	onMount(() => {
 		connect();
@@ -105,6 +106,7 @@
 	}
 
 	function scheduleReconnect() {
+		if (authFailed) return; // don't retry auth failures
 		if (reconnectTimer) clearTimeout(reconnectTimer);
 		const delay = Math.min(1000 * 2 ** reconnectAttempt, 10000);
 		reconnectTimer = setTimeout(() => {
@@ -116,16 +118,19 @@
 	function connect() {
 		status = 'connecting';
 		error = null;
+		authFailed = false;
 		if (reconnectTimer) {
 			clearTimeout(reconnectTimer);
 			reconnectTimer = null;
 		}
 		socket?.close();
 		const gen = ++socketGeneration;
+		let didOpen = false;
 		socket = new WebSocket(wsUrl);
 
 		socket.addEventListener('open', () => {
 			if (gen !== socketGeneration) return;
+			didOpen = true;
 			status = 'open';
 			reconnectAttempt = 0;
 		});
@@ -164,8 +169,15 @@
 			}
 		});
 
-		socket.addEventListener('close', () => {
+		socket.addEventListener('close', (e) => {
 			if (gen !== socketGeneration) return; // stale socket, ignore
+			// If socket never opened and closed with 1006, likely auth rejection (server returned 401)
+			if (!didOpen && e.code === 1006) {
+				authFailed = true;
+				status = 'error';
+				error = 'Connection rejected — check token';
+				return;
+			}
 			status = 'closed';
 			scheduleReconnect();
 		});
@@ -173,7 +185,7 @@
 		socket.addEventListener('error', (e) => {
 			if (gen !== socketGeneration) return;
 			status = 'error';
-			error = 'Unable to connect (check token?)';
+			error = 'Unable to connect';
 			console.error('ws error', e);
 		});
 	}
