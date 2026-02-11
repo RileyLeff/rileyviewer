@@ -6,6 +6,7 @@
 	import RileyMania from '$lib/components/RileyMania.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ExportMenu from '$lib/components/ExportMenu.svelte';
+	import CompareGrid from '$lib/components/CompareGrid.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 
@@ -52,6 +53,22 @@
 	let linkLogo = $derived(getLinkLogo());
 	let thumbPos = $derived(getThumbPos());
 	let thumbIsVertical = $derived(thumbPos === 'left' || thumbPos === 'right');
+
+	// Comparison grid state
+	let compareIds: string[] = $state([]);
+	let compareMode = $state(false);
+	let comparePlots = $derived(
+		compareIds.map((id) => plots.find((p) => p.id === id)).filter((p): p is PlotMessage => !!p)
+	);
+
+	function toggleCompare(id: string) {
+		const idx = compareIds.indexOf(id);
+		if (idx >= 0) {
+			compareIds.splice(idx, 1);
+		} else if (compareIds.length < 4) {
+			compareIds.push(id);
+		}
+	}
 
 	const STICKER_STORE = 'https://www.stickermule.com/rileyleff/item/19535644';
 
@@ -126,6 +143,8 @@
 					if (evicted) {
 						delete thumbnails[evicted.id];
 						srcCache.delete(evicted.id);
+						const cmpIdx = compareIds.indexOf(evicted.id);
+						if (cmpIdx >= 0) compareIds.splice(cmpIdx, 1);
 					}
 				}
 				activeId = parsed.id;
@@ -368,7 +387,11 @@
 				break;
 			}
 			case 'Escape':
-				if (error) error = null;
+				if (compareMode) {
+					compareMode = false;
+				} else if (error) {
+					error = null;
+				}
 				break;
 			case 'r':
 				if (!e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -453,15 +476,30 @@
 	{:else}
 		{#each plots as plot (plot.id)}
 			{@const thumbSrc = getThumbnailSrc(plot)}
+			{@const compareIdx = compareIds.indexOf(plot.id)}
 			<button
-				class={`flex-none flex flex-col items-center gap-1 border p-1.5 transition-colors ${
-					activeId === plot.id
+				class={`flex-none flex flex-col items-center gap-1 border p-1.5 transition-colors relative ${
+					activeId === plot.id && !compareMode
 						? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)]'
-						: 'border-[var(--color-border)] hover:border-[var(--color-text-faint)]'
+						: compareIdx >= 0
+							? 'border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]'
+							: 'border-[var(--color-border)] hover:border-[var(--color-text-faint)]'
 				}`}
 				data-active={activeId === plot.id ? 'true' : undefined}
-				onclick={() => (activeId = plot.id)}
+				onclick={(e) => {
+					if (e.shiftKey) {
+						toggleCompare(plot.id);
+					} else {
+						activeId = plot.id;
+						if (compareMode) compareMode = false;
+					}
+				}}
 			>
+				{#if compareIdx >= 0}
+					<span class="absolute -top-1.5 -right-1.5 bg-[var(--color-accent)] text-[var(--color-bg)] text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center z-10">
+						{compareIdx + 1}
+					</span>
+				{/if}
 				<div class="w-20 h-14 bg-[var(--color-bg-canvas)] flex items-center justify-center overflow-hidden">
 					{#if thumbSrc}
 						<img
@@ -498,7 +536,24 @@
 			{#if token}
 				<span class="text-[var(--color-accent)]">[token]</span>
 			{/if}
-			{#if current}
+			{#if compareMode}
+				<button
+					class="border border-[var(--color-accent)] bg-[var(--color-accent-muted)] px-2 py-0.5 text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)] transition-colors"
+					onclick={() => { compareMode = false; }}
+				>[exit compare]</button>
+			{:else if compareIds.length >= 2}
+				<button
+					class="border border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent)] hover:bg-[var(--color-accent-muted)] transition-colors"
+					onclick={() => { compareMode = true; }}
+				>[compare {compareIds.length}]</button>
+			{/if}
+			{#if compareIds.length > 0 && !compareMode}
+				<button
+					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-faint)] hover:border-[var(--color-text-faint)] transition-colors"
+					onclick={() => { compareIds = []; }}
+				>[clear]</button>
+			{/if}
+			{#if current && !compareMode}
 				<ExportMenu content={current.content} />
 			{/if}
 			<SettingsMenu />
@@ -531,7 +586,9 @@
 		{/if}
 
 		<main class="flex-1 min-h-0 min-w-0 p-3">
-			{#if !current}
+			{#if compareMode && comparePlots.length >= 2}
+				<CompareGrid plots={comparePlots} />
+			{:else if !current}
 				<div class="h-full relative flex flex-col items-center justify-center text-[var(--color-text-faint)] gap-4">
 					{#if bg === 'mania'}
 						<RileyMania />
