@@ -9,10 +9,10 @@ type ShutdownTx = Arc<Mutex<Option<oneshot::Sender<()>>>>;
 use anyhow::Context;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,8 @@ use uuid::Uuid;
 #[derive(Clone)]
 struct PlotState {
     history: Arc<RwLock<Vec<PlotMessage>>>,
-    tx: broadcast::Sender<PlotMessage>,
+    /// Pre-serialized JSON strings are broadcast so we serialize once for N clients.
+    tx: broadcast::Sender<String>,
     history_limit: usize,
 }
 
@@ -52,18 +53,70 @@ impl PlotState {
     }
 
     async fn push(&self, msg: PlotMessage) {
+        let json = serde_json::to_string(&msg).unwrap_or_else(|e| {
+            warn!("Failed to serialize plot message {}: {}", msg.id, e);
+            return String::new();
+        });
         {
             let mut history = self.history.write().await;
-            history.push(msg.clone());
+            history.push(msg);
             if history.len() > self.history_limit {
                 let overflow = history.len() - self.history_limit;
                 history.drain(0..overflow);
             }
         }
-        // Log if broadcast fails (no receivers) - this is expected when no clients are connected
-        if let Err(e) = self.tx.send(msg) {
-            debug!("No WebSocket clients connected to receive plot: {}", e.0.id);
+        if !json.is_empty() {
+            if let Err(_) = self.tx.send(json) {
+                debug!("No WebSocket clients connected to receive plot");
+            }
         }
+    }
+
+    /// Update metadata fields on an existing plot and broadcast the change.
+    /// Returns the updated PlotMessage, or None if not found.
+    async fn update_metadata(
+        &self,
+        id: &str,
+        title: Option<Option<String>>,
+        notes: Option<Option<String>>,
+        tags: Option<Vec<String>>,
+    ) -> Option<PlotMessage> {
+        let mut history = self.history.write().await;
+        let plot = history.iter_mut().find(|p| p.id == id)?;
+
+        if let Some(t) = title {
+            plot.title = t;
+        }
+        if let Some(n) = notes {
+            plot.notes = n;
+        }
+        if let Some(t) = tags {
+            plot.tags = t;
+        }
+
+        let updated = plot.clone();
+
+        // Broadcast a metadata update notification (not the full plot content)
+        #[derive(Serialize)]
+        struct MetadataUpdateBroadcast {
+            kind: &'static str,
+            id: String,
+            title: Option<String>,
+            notes: Option<String>,
+            tags: Vec<String>,
+        }
+        let broadcast_msg = MetadataUpdateBroadcast {
+            kind: "metadata_update",
+            id: updated.id.clone(),
+            title: updated.title.clone(),
+            notes: updated.notes.clone(),
+            tags: updated.tags.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&broadcast_msg) {
+            let _ = self.tx.send(json);
+        }
+
+        Some(updated)
     }
 }
 
@@ -192,6 +245,7 @@ fn build_router(state: PlotState, token: Option<String>, shutdown: ShutdownTx, d
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
         .route("/api/publish", post(publish_handler))
+        .route("/api/plots/{id}/metadata", patch(update_metadata_handler))
         .route("/api/shutdown", post(shutdown_handler))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
         .with_state((state, token, shutdown))
@@ -226,6 +280,7 @@ async fn handle_socket(state: PlotState, socket: WebSocket) {
 
     let (mut sender, mut receiver) = socket.split();
 
+    // Serialize history once and send to this client
     let history = state.history.read().await.clone();
     let history_count = history.len();
     for msg in history {
@@ -242,23 +297,15 @@ async fn handle_socket(state: PlotState, socket: WebSocket) {
     debug!("Sent {} history items to new WebSocket client", history_count);
 
     // Concurrently read from both the broadcast channel and the client socket.
-    // Reading from the client detects disconnects/close frames immediately
-    // instead of waiting for the next send to fail.
+    // Broadcast sends pre-serialized JSON strings so we forward directly.
     loop {
         tokio::select! {
             msg = rx.recv() => {
                 match msg {
-                    Ok(plot) => {
-                        match serde_json::to_string(&plot) {
-                            Ok(text) => {
-                                if let Err(e) = sender.send(Message::Text(text)).await {
-                                    debug!("WebSocket client disconnected: {}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                warn!("Failed to serialize plot message {}: {}", plot.id, e);
-                            }
+                    Ok(text) => {
+                        if let Err(e) = sender.send(Message::Text(text)).await {
+                            debug!("WebSocket client disconnected: {}", e);
+                            break;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -328,6 +375,12 @@ fn token_valid(expected: &Option<String>, provided: Option<&str>) -> bool {
 struct PublishRequest {
     token: Option<String>,
     content: rv_core::PlotContent,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -343,10 +396,50 @@ async fn publish_handler(
         warn!("Publish request rejected: invalid or missing token");
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let msg = PlotMessage::new(req.content);
+    let msg = PlotMessage::with_metadata(req.content, req.title, req.notes, req.tags);
     let id = msg.id.clone();
     state.push(msg).await;
     Json(PublishResponse { id }).into_response()
+}
+
+#[derive(Deserialize)]
+struct MetadataUpdateRequest {
+    token: Option<String>,
+    #[serde(default)]
+    title: Option<Option<String>>,
+    #[serde(default)]
+    notes: Option<Option<String>>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct MetadataUpdateResponse {
+    id: String,
+    title: Option<String>,
+    notes: Option<String>,
+    tags: Vec<String>,
+}
+
+async fn update_metadata_handler(
+    State((state, expected_token, _shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
+    Path(plot_id): Path<String>,
+    Json(req): Json<MetadataUpdateRequest>,
+) -> Response {
+    if !token_valid(&expected_token, req.token.as_deref()) {
+        warn!("Metadata update rejected: invalid or missing token");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match state.update_metadata(&plot_id, req.title, req.notes, req.tags).await {
+        Some(updated) => Json(MetadataUpdateResponse {
+            id: updated.id,
+            title: updated.title,
+            notes: updated.notes,
+            tags: updated.tags,
+        })
+        .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 fn default_dist_dir() -> std::path::PathBuf {
