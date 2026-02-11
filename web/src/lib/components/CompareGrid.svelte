@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
+	import ExportMenu from '$lib/components/ExportMenu.svelte';
 	import type { PlotContent, PlotMessage } from '$lib/types';
 
 	interface Props {
@@ -188,6 +189,9 @@
 					</span>
 					<span class="text-[11px] text-[var(--color-text-faint)]">
 						{humanTime(plot.timestamp)}
+					</span>
+					<span class="ml-auto">
+						<ExportMenu content={plot.content} />
 					</span>
 				</div>
 
