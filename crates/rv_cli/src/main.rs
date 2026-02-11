@@ -586,6 +586,18 @@ async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool
                         }
                     }
 
+                    // Write-stability check: wait until file size is stable
+                    // to avoid reading partially-written files.
+                    let stable = (|| {
+                        let initial = fs::metadata(&event_path).ok()?.len();
+                        std::thread::sleep(Duration::from_millis(50));
+                        let current = fs::metadata(&event_path).ok()?.len();
+                        Some(initial == current && current > 0)
+                    })().unwrap_or(false);
+                    if !stable {
+                        continue;
+                    }
+
                     // Read and send
                     match fs::read(&event_path) {
                         Ok(data) if !data.is_empty() => {
