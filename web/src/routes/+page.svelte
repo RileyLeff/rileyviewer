@@ -8,6 +8,7 @@
 	import ExportMenu from '$lib/components/ExportMenu.svelte';
 	import CompareGrid from '$lib/components/CompareGrid.svelte';
 	import FilterBar from '$lib/components/FilterBar.svelte';
+	import MetadataPanel from '$lib/components/MetadataPanel.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 	import type { PlotContent, PlotMessage, MetadataUpdate } from '$lib/types';
@@ -794,6 +795,13 @@
 			{searchQuery}
 			ontagclick={(tag) => { activeTag = tag; }}
 			onsearch={(q) => { searchQuery = q; }}
+		/>
+	{/if}
+
+	{#if current && !compareMode}
+		<MetadataPanel
+			plot={current}
+			onupdate={(id, fields) => updatePlotMetadata(id, fields)}
 		/>
 	{/if}
 
