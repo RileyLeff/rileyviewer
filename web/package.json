@@ -13,6 +13,7 @@
 	},
 	"dependencies": {
 		"apache-arrow": "^21.1.0",
+		"jspdf": "^4.1.0",
 		"jszip": "^3.10.1",
 		"plotly.js-dist-min": "^2.35.2",
 		"vega": "^5.30.0",

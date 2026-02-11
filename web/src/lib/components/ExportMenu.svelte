@@ -224,6 +224,104 @@
 		else if (content.type === 'Vega') exportVegaPng();
 	}
 
+	async function exportPdf() {
+		exporting = true;
+		exportError = null;
+		try {
+			const { jsPDF } = await import('jspdf');
+			const type = content.type;
+
+			if (type === 'Png') {
+				const imgData = `data:image/png;base64,${content.data}`;
+				const img = new Image();
+				img.src = imgData;
+				await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; });
+				const w = img.naturalWidth;
+				const h = img.naturalHeight;
+				const orientation = w > h ? 'landscape' : 'portrait';
+				const doc = new jsPDF({ orientation, unit: 'px', format: [w, h] });
+				doc.addImage(imgData, 'PNG', 0, 0, w, h);
+				doc.save(`plot-${timestamp()}.pdf`);
+				onexport?.(`exported plot-${timestamp()}.pdf`);
+			} else if (type === 'Svg') {
+				// Render SVG to canvas, then to PDF
+				const blob = new Blob([content.data], { type: 'image/svg+xml' });
+				const url = URL.createObjectURL(blob);
+				const img = new Image();
+				img.src = url;
+				await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; });
+				const w = img.naturalWidth || 800;
+				const h = img.naturalHeight || 600;
+				const canvas = document.createElement('canvas');
+				canvas.width = w * 2;
+				canvas.height = h * 2;
+				const ctx = canvas.getContext('2d')!;
+				ctx.scale(2, 2);
+				ctx.drawImage(img, 0, 0, w, h);
+				URL.revokeObjectURL(url);
+				const dataUrl = canvas.toDataURL('image/png');
+				const orientation = w > h ? 'landscape' : 'portrait';
+				const doc = new jsPDF({ orientation, unit: 'px', format: [w, h] });
+				doc.addImage(dataUrl, 'PNG', 0, 0, w, h);
+				doc.save(`plot-${timestamp()}.pdf`);
+				onexport?.(`exported plot-${timestamp()}.pdf`);
+			} else if (type === 'Plotly') {
+				const payload = JSON.parse(content.data);
+				const Plotly = (await import('plotly.js-dist-min')).default;
+				const div = document.createElement('div');
+				div.style.position = 'absolute';
+				div.style.left = '-9999px';
+				div.style.width = '800px';
+				div.style.height = '600px';
+				document.body.appendChild(div);
+				try {
+					await Plotly.newPlot(div, payload.data ?? payload, {
+						...(payload.layout ?? {}), width: 800, height: 600,
+					}, { staticPlot: true });
+					const dataUrl = await Plotly.toImage(div, { format: 'png', width: 1600, height: 1200 });
+					Plotly.purge(div);
+					const doc = new jsPDF({ orientation: 'landscape', unit: 'px', format: [800, 600] });
+					doc.addImage(dataUrl, 'PNG', 0, 0, 800, 600);
+					doc.save(`plot-${timestamp()}.pdf`);
+					onexport?.(`exported plot-${timestamp()}.pdf`);
+				} finally {
+					try { document.body.removeChild(div); } catch {}
+				}
+			} else if (type === 'Vega') {
+				const spec = JSON.parse(content.data);
+				const embed = (await import('vega-embed')).default;
+				const div = document.createElement('div');
+				div.style.position = 'absolute';
+				div.style.left = '-9999px';
+				div.style.width = '800px';
+				div.style.height = '600px';
+				document.body.appendChild(div);
+				try {
+					const specSized = {
+						...spec, width: 760, height: 560,
+						autosize: { type: 'fit', contains: 'padding' },
+					};
+					const result = await embed(div, specSized, { actions: false, renderer: 'canvas' });
+					const canvas = await result.view.toCanvas(2);
+					result.view.finalize();
+					const dataUrl = canvas.toDataURL('image/png');
+					const doc = new jsPDF({ orientation: 'landscape', unit: 'px', format: [800, 600] });
+					doc.addImage(dataUrl, 'PNG', 0, 0, 800, 600);
+					doc.save(`plot-${timestamp()}.pdf`);
+					onexport?.(`exported plot-${timestamp()}.pdf`);
+				} finally {
+					try { document.body.removeChild(div); } catch {}
+				}
+			}
+			close();
+		} catch (e) {
+			console.error('Failed to export PDF:', e);
+			exportError = 'PDF export failed';
+		} finally {
+			exporting = false;
+		}
+	}
+
 	const btnClass = 'w-full text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] py-1 transition-colors';
 </script>
 
@@ -248,14 +346,18 @@
 				{#if content.type === 'Png'}
 					<button class={btnClass} onclick={exportPng}>[PNG (original)]</button>
 					<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
+					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
 				{:else if content.type === 'Svg'}
 					<button class={btnClass} onclick={exportSvg}>[SVG (original)]</button>
+					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
 				{:else if content.type === 'Plotly'}
 					<button class={btnClass} onclick={exportJson}>[JSON (data)]</button>
 					<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
+					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
 				{:else if content.type === 'Vega'}
 					<button class={btnClass} onclick={exportJson}>[JSON (data)]</button>
 					<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
+					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
 				{:else if content.type === 'Html'}
 					<button class={btnClass} onclick={exportHtml}>[HTML (source)]</button>
 				{:else if content.type === 'ArrowIpc'}
