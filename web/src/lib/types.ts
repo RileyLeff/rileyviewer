@@ -11,4 +11,15 @@ export type PlotMessage = {
 	id: string;
 	timestamp: number;
 	content: PlotContent;
+	title?: string;
+	notes?: string;
+	tags?: string[];
+};
+
+export type MetadataUpdate = {
+	kind: 'metadata_update';
+	id: string;
+	title?: string | null;
+	notes?: string | null;
+	tags?: string[];
 };

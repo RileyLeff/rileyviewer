@@ -9,7 +9,7 @@
 	import CompareGrid from '$lib/components/CompareGrid.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
-	import type { PlotContent, PlotMessage } from '$lib/types';
+	import type { PlotContent, PlotMessage, MetadataUpdate } from '$lib/types';
 
 	let socket: WebSocket | null = $state(null);
 	let socketGeneration = 0; // tracks which socket is "current" to ignore stale close events
@@ -149,11 +149,26 @@
 		socket.addEventListener('message', async (event) => {
 			if (gen !== socketGeneration) return;
 			try {
-				const parsed = JSON.parse(event.data) as PlotMessage;
-				if (plots.some((p) => p.id === parsed.id)) {
+				const parsed = JSON.parse(event.data);
+
+				// Handle metadata updates (PATCH broadcast)
+				if (parsed.kind === 'metadata_update') {
+					const update = parsed as MetadataUpdate;
+					const plot = plots.find((p) => p.id === update.id);
+					if (plot) {
+						if ('title' in update) plot.title = update.title ?? undefined;
+						if ('notes' in update) plot.notes = update.notes ?? undefined;
+						if ('tags' in update) plot.tags = update.tags;
+					}
 					return;
 				}
-				plots.push(parsed);
+
+				// Regular plot message
+				const plotMsg = parsed as PlotMessage;
+				if (plots.some((p) => p.id === plotMsg.id)) {
+					return;
+				}
+				plots.push(plotMsg);
 				while (plots.length > MAX_CLIENT_PLOTS) {
 					const evicted = plots.shift();
 					if (evicted) {
@@ -163,7 +178,7 @@
 						if (cmpIdx >= 0) compareIds.splice(cmpIdx, 1);
 					}
 				}
-				activeId = parsed.id;
+				activeId = plotMsg.id;
 				await tick();
 				if (historyEl) {
 					// Only auto-scroll if user is already near the end
@@ -175,8 +190,8 @@
 						if (nearEnd) historyEl.scrollLeft = historyEl.scrollWidth;
 					}
 				}
-				if (parsed.content.type === 'Plotly' || parsed.content.type === 'Vega') {
-					queueThumbnail(parsed);
+				if (plotMsg.content.type === 'Plotly' || plotMsg.content.type === 'Vega') {
+					queueThumbnail(plotMsg);
 				}
 			} catch (err) {
 				console.error('failed to parse plot message', err);
@@ -484,6 +499,38 @@
 		} catch (e) {
 			console.warn('Copy to clipboard failed:', e);
 			showToast('copy failed');
+		}
+	}
+
+	async function updatePlotMetadata(
+		id: string,
+		fields: { title?: string | null; notes?: string | null; tags?: string[] }
+	) {
+		// Optimistic local update
+		const plot = plots.find((p) => p.id === id);
+		if (plot) {
+			if ('title' in fields) plot.title = fields.title ?? undefined;
+			if ('notes' in fields) plot.notes = fields.notes ?? undefined;
+			if ('tags' in fields) plot.tags = fields.tags;
+		}
+
+		// PATCH server
+		const url = `${$page.url.protocol}//${$page.url.host}/api/plots/${id}/metadata`;
+		const body: Record<string, any> = { ...fields };
+		if (token) body.token = token;
+		try {
+			const resp = await fetch(url, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+			});
+			if (!resp.ok) {
+				console.error('Failed to update metadata:', resp.status);
+				showToast('metadata update failed');
+			}
+		} catch (e) {
+			console.error('Failed to update metadata:', e);
+			showToast('metadata update failed');
 		}
 	}
 
