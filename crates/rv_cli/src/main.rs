@@ -53,7 +53,7 @@ enum Command {
     Send {
         /// File to send (reads stdin if omitted)
         file: Option<PathBuf>,
-        /// Content type override: png, svg, plotly, vega, html, csv, arrow
+        /// Content type override: png, svg, plotly, vega, html, csv, arrow, parquet
         #[arg(long, value_name = "TYPE")]
         r#type: Option<String>,
     },
@@ -373,13 +373,16 @@ fn send_data_to_server(
         detect_from_content(data)
     };
 
-    // Convert TSV to CSV before building content JSON
+    // Convert parquet to Arrow IPC before building content JSON
     let converted;
-    let data = if content_type == "csv" && is_tsv(data, filename) {
+    let (content_type, data) = if content_type == "parquet" {
+        converted = parquet_to_arrow_ipc(data)?;
+        ("arrow".to_string(), converted.as_slice())
+    } else if content_type == "csv" && is_tsv(data, filename) {
         converted = tsv_to_csv(data)?;
-        &converted
+        (content_type, converted.as_slice())
     } else {
-        data
+        (content_type, data)
     };
 
     // Build content JSON
@@ -457,13 +460,13 @@ fn build_content_json(content_type: &str, data: &[u8]) -> Result<String> {
             let encoded = base64::engine::general_purpose::STANDARD.encode(data);
             Ok(format!(r#"{{"type":"ArrowIpc","data":"{}"}}"#, encoded))
         }
-        other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html, csv, arrow", other),
+        other => bail!("Unknown content type: '{}'. Use: png, svg, plotly, vega, html, csv, arrow, parquet", other),
     }
 }
 
 /// File extensions that the watcher will auto-send.
 const WATCH_EXTENSIONS: &[&str] = &[
-    "png", "svg", "html", "htm", "json", "csv", "tsv", "arrow", "ipc",
+    "png", "svg", "html", "htm", "json", "csv", "tsv", "arrow", "ipc", "parquet",
 ];
 
 fn has_supported_extension(path: &std::path::Path) -> bool {
@@ -669,6 +672,7 @@ fn detect_from_extension(path: &PathBuf, data: &[u8]) -> String {
         Some("json") => detect_json_type(data),
         Some("csv" | "tsv") => "csv".to_string(),
         Some("arrow" | "ipc") => "arrow".to_string(),
+        Some("parquet") => "parquet".to_string(),
         _ => detect_from_content(data), // unknown extension: sniff content
     }
 }
@@ -677,6 +681,11 @@ fn detect_from_content(data: &[u8]) -> String {
     // PNG magic bytes
     if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         return "png".to_string();
+    }
+
+    // Parquet magic bytes: "PAR1"
+    if data.starts_with(b"PAR1") {
+        return "parquet".to_string();
     }
 
     // Arrow IPC file format magic: "ARROW1" followed by padding
@@ -731,6 +740,31 @@ fn detect_json_type(data: &[u8]) -> String {
         }
     }
     "vega".to_string() // default JSON → Vega
+}
+
+/// Read a Parquet file from bytes and convert to Arrow IPC streaming format.
+fn parquet_to_arrow_ipc(data: &[u8]) -> Result<Vec<u8>> {
+    use arrow::array::RecordBatchReader;
+    use arrow::ipc::writer::StreamWriter;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let reader = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data.to_vec()))
+        .context("failed to open Parquet file")?
+        .build()
+        .context("failed to build Parquet reader")?;
+
+    let schema = reader.schema();
+    let mut buf = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buf, &schema)
+            .context("failed to create Arrow IPC writer")?;
+        for batch in reader {
+            let batch = batch.context("failed to read Parquet record batch")?;
+            writer.write(&batch).context("failed to write Arrow IPC batch")?;
+        }
+        writer.finish().context("failed to finish Arrow IPC stream")?;
+    }
+    Ok(buf)
 }
 
 /// Check if data is likely TSV (based on file extension).

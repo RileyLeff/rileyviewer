@@ -26,3 +26,6 @@ notify-debouncer-mini = "0.5"
 ureq = "2.9"
 uuid = { workspace = true }
 webbrowser = "1.0"
+parquet = { version = "54", default-features = false, features = ["arrow"] }
+arrow = { version = "54", default-features = false, features = ["ipc"] }
+bytes = "1"
