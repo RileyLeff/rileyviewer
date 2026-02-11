@@ -31,6 +31,16 @@
 	let thumbnailQueue: PlotMessage[] = $state([]);
 	let isProcessingThumbnails = $state(false);
 
+	// Toast notification state
+	let toast: string | null = $state(null);
+	let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function showToast(msg: string, durationMs = 2000) {
+		if (toastTimer) clearTimeout(toastTimer);
+		toast = msg;
+		toastTimer = setTimeout(() => { toast = null; }, durationMs);
+	}
+
 	let current = $derived(plots.find((p) => p.id === activeId) ?? plots.at(-1));
 	let currentSrc = $derived(current ? renderSrc(current.content, current.id) : null);
 	let token = $derived($page.url.searchParams.get('token'));
@@ -411,6 +421,25 @@
 				const resp = await fetch(`data:image/png;base64,${current.content.data}`);
 				const blob = await resp.blob();
 				await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+			} else if (current.content.type === 'ArrowIpc') {
+				// Convert Arrow IPC to CSV text for clipboard
+				const { tableFromIPC } = await import('apache-arrow');
+				const binary = atob(current.content.data);
+				const bytes = new Uint8Array(binary.length);
+				for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+				const table = tableFromIPC(bytes);
+				const cols = table.schema.fields.map((f) => f.name);
+				const rows = [cols.join(',')];
+				for (let i = 0; i < table.numRows; i++) {
+					rows.push(cols.map((c) => {
+						const v = table.getChild(c)?.get(i);
+						if (v == null) return '';
+						const s = String(v);
+						return s.includes(',') || s.includes('"') || s.includes('\n')
+							? `"${s.replace(/"/g, '""')}"` : s;
+					}).join(','));
+				}
+				await navigator.clipboard.writeText(rows.join('\n'));
 			} else if (current.content.type === 'Svg') {
 				await navigator.clipboard.writeText(current.content.data);
 			} else if (current.content.type === 'Plotly' || current.content.type === 'Vega') {
@@ -420,8 +449,10 @@
 			} else if (current.content.type === 'Csv') {
 				await navigator.clipboard.writeText(current.content.data);
 			}
+			showToast('copied to clipboard');
 		} catch (e) {
 			console.warn('Copy to clipboard failed:', e);
+			showToast('copy failed');
 		}
 	}
 
@@ -662,4 +693,10 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if toast}
+		<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2 text-xs text-[var(--color-text-muted)] shadow-lg">
+			{toast}
+		</div>
+	{/if}
 </div>
