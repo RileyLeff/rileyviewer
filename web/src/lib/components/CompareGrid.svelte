@@ -2,21 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
-
-	type PlotContent =
-		| { type: 'Png'; data: string }
-		| { type: 'Svg'; data: string }
-		| { type: 'Plotly'; data: string }
-		| { type: 'Vega'; data: string }
-		| { type: 'Html'; data: string }
-		| { type: 'ArrowIpc'; data: string }
-		| { type: 'Csv'; data: string };
-
-	type PlotMessage = {
-		id: string;
-		timestamp: number;
-		content: PlotContent;
-	};
+	import type { PlotContent, PlotMessage } from '$lib/types';
 
 	interface Props {
 		plots: PlotMessage[];

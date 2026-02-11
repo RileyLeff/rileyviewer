@@ -1,14 +1,6 @@
 <script lang="ts">
 	import { tableFromIPC } from 'apache-arrow';
-
-	type PlotContent =
-		| { type: 'Png'; data: string }
-		| { type: 'Svg'; data: string }
-		| { type: 'Plotly'; data: string }
-		| { type: 'Vega'; data: string }
-		| { type: 'Html'; data: string }
-		| { type: 'ArrowIpc'; data: string }
-		| { type: 'Csv'; data: string };
+	import type { PlotContent } from '$lib/types';
 
 	interface Props {
 		content: PlotContent;
