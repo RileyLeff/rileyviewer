@@ -688,8 +688,9 @@
 		{#each filteredPlots as plot (plot.id)}
 			{@const thumbSrc = getThumbnailSrc(plot)}
 			{@const compareIdx = compareIds.indexOf(plot.id)}
+			{@const tooltip = [plot.title, humanTime(plot.timestamp), plot.notes?.split('\n')[0]].filter(Boolean).join(' — ')}
 			<button
-				class={`flex-none flex flex-col items-center gap-1 border p-1.5 transition-colors relative ${
+				class={`flex-none flex flex-col items-center gap-0.5 border p-1.5 transition-colors relative ${
 					activeId === plot.id && !compareMode
 						? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)]'
 						: compareIdx >= 0
@@ -697,6 +698,7 @@
 							: 'border-[var(--color-border)] hover:border-[var(--color-text-faint)]'
 				}`}
 				data-active={activeId === plot.id ? 'true' : undefined}
+				title={tooltip}
 				onclick={(e) => {
 					if (e.shiftKey) {
 						toggleCompare(plot.id);
@@ -722,6 +724,9 @@
 						<span class="text-[11px] text-[var(--color-text-faint)] uppercase">{plot.content.type}</span>
 					{/if}
 				</div>
+				{#if plot.title}
+					<span class="text-[10px] text-[var(--color-text-muted)] w-20 truncate text-center">{plot.title}</span>
+				{/if}
 				<span class="text-[11px] text-[var(--color-text-faint)]">{humanTime(plot.timestamp)}</span>
 			</button>
 		{/each}
