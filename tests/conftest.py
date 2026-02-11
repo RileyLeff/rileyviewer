@@ -74,9 +74,23 @@ class ServerInfo:
     def publish_url(self) -> str:
         return f"{self.base_url}/api/publish"
 
-    def publish(self, content: dict) -> str:
+    def publish(
+        self,
+        content: dict,
+        *,
+        title: str | None = None,
+        notes: str | None = None,
+        tags: list[str] | None = None,
+    ) -> str:
         """Publish content via HTTP POST, return the plot ID."""
-        payload = json.dumps({"content": content, "token": self.token}).encode()
+        body: dict = {"content": content, "token": self.token}
+        if title is not None:
+            body["title"] = title
+        if notes is not None:
+            body["notes"] = notes
+        if tags is not None:
+            body["tags"] = tags
+        payload = json.dumps(body).encode()
         req = urllib.request.Request(
             self.publish_url,
             data=payload,
@@ -85,6 +99,24 @@ class ServerInfo:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read())["id"]
+
+    def patch_metadata(self, plot_id: str, **fields) -> dict:
+        """PATCH metadata on an existing plot, return the response dict.
+
+        Accepts keyword args: title, notes, tags.
+        """
+        body: dict = {"token": self.token}
+        body.update(fields)
+        payload = json.dumps(body).encode()
+        url = f"{self.base_url}/api/plots/{plot_id}/metadata"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="PATCH",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
 
 
 @pytest.fixture(scope="session")

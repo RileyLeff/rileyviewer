@@ -245,7 +245,7 @@ fn build_router(state: PlotState, token: Option<String>, shutdown: ShutdownTx, d
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
         .route("/api/publish", post(publish_handler))
-        .route("/api/plots/{id}/metadata", patch(update_metadata_handler))
+        .route("/api/plots/:id/metadata", patch(update_metadata_handler))
         .route("/api/shutdown", post(shutdown_handler))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
         .with_state((state, token, shutdown))
