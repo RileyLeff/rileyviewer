@@ -158,6 +158,10 @@
 			const cells = rows[i].map((c) => {
 				const trimmed = c.trim();
 				if (trimmed === '') return null;
+				// Only coerce to number if it won't lose information.
+				// Preserve strings with leading zeros (e.g., "00123", "007")
+				// but allow "0", "0.5", negative numbers, etc.
+				if (trimmed.length > 1 && trimmed[0] === '0' && trimmed[1] !== '.') return trimmed;
 				const num = Number(trimmed);
 				if (!isNaN(num) && trimmed !== '') return num;
 				return trimmed;
