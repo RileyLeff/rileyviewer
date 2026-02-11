@@ -813,37 +813,24 @@ fn is_tsv(data: &[u8], filename: Option<&str>) -> bool {
     false
 }
 
-/// Convert TSV data to CSV. Handles quoting of fields that contain commas.
+/// Convert TSV data to CSV using the `csv` crate for quote-aware parsing.
+/// Correctly handles quoted fields containing tabs, newlines, and double-quotes.
 fn tsv_to_csv(data: &[u8]) -> Result<Vec<u8>> {
-    let text = String::from_utf8(data.to_vec())
-        .context("TSV data is not valid UTF-8")?;
-    let mut out = String::with_capacity(text.len());
-    for (i, line) in text.lines().enumerate() {
-        if i > 0 {
-            out.push('\n');
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(data);
+    let mut csv_out = Vec::with_capacity(data.len());
+    {
+        let mut writer = csv::WriterBuilder::new()
+            .from_writer(&mut csv_out);
+        for record in reader.records() {
+            let record = record.context("failed to parse TSV record")?;
+            writer.write_record(&record)
+                .context("failed to write CSV record")?;
         }
-        for (j, field) in line.split('\t').enumerate() {
-            if j > 0 {
-                out.push(',');
-            }
-            // Quote field if it contains comma, double-quote, or newline
-            if field.contains(',') || field.contains('"') || field.contains('\n') {
-                out.push('"');
-                for ch in field.chars() {
-                    if ch == '"' {
-                        out.push_str("\"\"");
-                    } else {
-                        out.push(ch);
-                    }
-                }
-                out.push('"');
-            } else {
-                out.push_str(field);
-            }
-        }
+        writer.flush().context("failed to flush CSV output")?;
     }
-    if text.ends_with('\n') {
-        out.push('\n');
-    }
-    Ok(out.into_bytes())
+    Ok(csv_out)
 }

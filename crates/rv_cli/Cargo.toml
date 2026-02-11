@@ -29,3 +29,4 @@ webbrowser = "1.0"
 parquet = { version = "54", default-features = false, features = ["arrow"] }
 arrow = { version = "54", default-features = false, features = ["ipc"] }
 bytes = "1"
+csv = "1"
