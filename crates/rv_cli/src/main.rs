@@ -155,6 +155,15 @@ fn generate_token() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+/// Mask a token for safe display, showing only first 4 and last 4 characters.
+fn mask_token(token: &str) -> String {
+    if token.len() <= 8 {
+        "*".repeat(token.len())
+    } else {
+        format!("{}...{}", &token[..4], &token[token.len() - 4..])
+    }
+}
+
 async fn serve(host: String, port: u16, token: Option<String>, dist_dir: Option<String>, open_browser: bool, history_limit: usize) -> Result<()> {
     // Check if already running
     if let Some(state) = read_state() {
@@ -196,9 +205,10 @@ async fn serve(host: String, port: u16, token: Option<String>, dist_dir: Option<
     println!("RileyViewer server started");
     println!("  Address: http://{}", addr);
     let url = if let Some(ref t) = token {
-        println!("  Token: {}", t);
+        let masked = mask_token(t);
         let url = format!("http://{}/?token={}", addr, t);
-        println!("  URL: {}", url);
+        println!("  Token: {}", masked);
+        println!("  URL: http://{}/?token={}", addr, masked);
         url
     } else {
         format!("http://{}/", addr)
@@ -233,8 +243,9 @@ fn status() -> Result<()> {
                 println!("  PID: {}", state.pid);
                 println!("  Address: http://{}", state.addr);
                 if let Some(ref t) = state.token {
-                    println!("  Token: {}", t);
-                    println!("  URL: http://{}/?token={}", state.addr, t);
+                    let masked = mask_token(t);
+                    println!("  Token: {}", masked);
+                    println!("  URL: http://{}/?token={}", state.addr, masked);
                 }
             } else {
                 println!("Server not running (stale state file)");
@@ -301,7 +312,13 @@ fn open() -> Result<()> {
                 } else {
                     format!("http://{}/", state.addr)
                 };
-                println!("Opening {}", url);
+                let masked_url = if state.token.is_some() {
+                    let masked = mask_token(state.token.as_deref().unwrap_or(""));
+                    format!("http://{}/?token={}", state.addr, masked)
+                } else {
+                    url.clone()
+                };
+                println!("Opening {}", masked_url);
                 if let Err(e) = webbrowser::open(&url) {
                     eprintln!("Failed to open browser: {}", e);
                 }
