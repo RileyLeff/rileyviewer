@@ -56,6 +56,12 @@ enum Command {
         /// Content type override: png, svg, plotly, vega, html, csv, arrow, parquet
         #[arg(long, value_name = "TYPE")]
         r#type: Option<String>,
+        /// Title for the plot
+        #[arg(long)]
+        title: Option<String>,
+        /// Comma-separated tags
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
     },
     /// Watch a directory and auto-send new/modified files
     Watch {
@@ -67,6 +73,12 @@ enum Command {
         /// Send existing matching files on startup
         #[arg(long)]
         existing: bool,
+        /// Title for all watched plots
+        #[arg(long)]
+        title: Option<String>,
+        /// Comma-separated tags for all watched plots
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
     },
 }
 
@@ -145,8 +157,8 @@ async fn main() -> Result<()> {
         Command::Status => status()?,
         Command::Stop => stop()?,
         Command::Open => open()?,
-        Command::Send { file, r#type } => send(file, r#type)?,
-        Command::Watch { path, r#type, existing } => watch(path, r#type, existing).await?,
+        Command::Send { file, r#type, title, tags } => send(file, r#type, title, tags)?,
+        Command::Watch { path, r#type, existing, title, tags } => watch(path, r#type, existing, title, tags).await?,
     }
     Ok(())
 }
@@ -336,7 +348,7 @@ fn open() -> Result<()> {
     Ok(())
 }
 
-fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
+fn send(file: Option<PathBuf>, type_override: Option<String>, title: Option<String>, tags: Vec<String>) -> Result<()> {
     let state = read_state().context("No server running. Start one with: rileyviewer serve")?;
     if !check_server_running(&state.addr) {
         bail!("Server not running at {}. Start one with: rileyviewer serve", state.addr);
@@ -369,6 +381,8 @@ fn send(file: Option<PathBuf>, type_override: Option<String>) -> Result<()> {
         type_override.as_deref(),
         &state.addr,
         state.token.as_deref(),
+        title.as_deref(),
+        &tags,
     )?;
 
     println!("Sent {} as {} (id: {})", source_name, content_type, id);
@@ -382,6 +396,8 @@ fn send_data_to_server(
     type_override: Option<&str>,
     addr: &str,
     token: Option<&str>,
+    title: Option<&str>,
+    tags: &[String],
 ) -> Result<(String, String)> {
     // Detect content type
     let content_type = if let Some(t) = type_override {
@@ -407,13 +423,19 @@ fn send_data_to_server(
     // Build content JSON
     let content_json = build_content_json(&content_type, data)?;
 
-    // Build full payload
-    let payload = if let Some(token) = token {
-        let token_escaped = serde_json::to_string(token)?;
-        format!(r#"{{"token":{},"content":{}}}"#, token_escaped, content_json)
-    } else {
-        format!(r#"{{"content":{}}}"#, content_json)
-    };
+    // Build full payload with optional metadata
+    let mut parts = Vec::new();
+    if let Some(token) = token {
+        parts.push(format!(r#""token":{}"#, serde_json::to_string(token)?));
+    }
+    parts.push(format!(r#""content":{}"#, content_json));
+    if let Some(title) = title {
+        parts.push(format!(r#""title":{}"#, serde_json::to_string(title)?));
+    }
+    if !tags.is_empty() {
+        parts.push(format!(r#""tags":{}"#, serde_json::to_string(tags)?));
+    }
+    let payload = format!("{{{}}}", parts.join(","));
 
     let url = format!("http://{}/api/publish", addr);
     let resp = ureq::post(&url)
@@ -495,7 +517,7 @@ fn has_supported_extension(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool) -> Result<()> {
+async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool, title: Option<String>, tags: Vec<String>) -> Result<()> {
     use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
     let state = read_state().context("No server running. Start one with: rileyviewer serve")?;
@@ -520,7 +542,7 @@ async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool
 
     // Send existing files if requested
     if send_existing && canonical.is_dir() {
-        send_existing_files(&canonical, type_override.as_deref(), &state.addr, state.token.as_deref())?;
+        send_existing_files(&canonical, type_override.as_deref(), &state.addr, state.token.as_deref(), title.as_deref(), &tags)?;
     }
 
     println!("Watching {} for changes... (Ctrl+C to stop)", canonical.display());
@@ -612,6 +634,8 @@ async fn watch(path: PathBuf, type_override: Option<String>, send_existing: bool
                                 type_override.as_deref(),
                                 &state.addr,
                                 state.token.as_deref(),
+                                title.as_deref(),
+                                &tags,
                             ) {
                                 Ok((content_type, id)) => {
                                     println!("Sent {} as {} (id: {})", event_path.display(), content_type, id);
@@ -653,6 +677,8 @@ fn send_existing_files(
     type_override: Option<&str>,
     addr: &str,
     token: Option<&str>,
+    title: Option<&str>,
+    tags: &[String],
 ) -> Result<()> {
     let mut paths: Vec<PathBuf> = Vec::new();
     collect_files_recursive(dir, type_override, &mut paths)?;
@@ -662,7 +688,7 @@ fn send_existing_files(
         match fs::read(&path) {
             Ok(data) if !data.is_empty() => {
                 let filename = path.display().to_string();
-                match send_data_to_server(&data, Some(&filename), type_override, addr, token) {
+                match send_data_to_server(&data, Some(&filename), type_override, addr, token, title, tags) {
                     Ok((content_type, id)) => {
                         println!("Sent {} as {} (id: {})", path.display(), content_type, id);
                     }
