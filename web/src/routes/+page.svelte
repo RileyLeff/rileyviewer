@@ -9,6 +9,7 @@
 	import CompareGrid from '$lib/components/CompareGrid.svelte';
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import MetadataPanel from '$lib/components/MetadataPanel.svelte';
+	import CollectionsMenu from '$lib/components/CollectionsMenu.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 	import type { PlotContent, PlotMessage, MetadataUpdate } from '$lib/types';
@@ -779,6 +780,14 @@
 			{#if current && !compareMode}
 				<ExportMenu content={current.content} onexport={showToast} />
 			{/if}
+			<CollectionsMenu
+				{activeTag}
+				{searchQuery}
+				onselectcollection={(c) => {
+					activeTag = c.tag ?? null;
+					searchQuery = c.search ?? '';
+				}}
+			/>
 			<SettingsMenu />
 			<button
 				class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
