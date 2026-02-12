@@ -190,6 +190,23 @@
 					return;
 				}
 
+				// Handle clear broadcast
+				if (parsed.kind === 'clear') {
+					plots.length = 0;
+					activeId = null;
+					compareIds.length = 0;
+					compareMode = false;
+					thumbnails = {};
+					srcCache.clear();
+					return;
+				}
+
+				// Handle delete broadcast
+				if (parsed.kind === 'delete') {
+					removePlotLocally(parsed.id);
+					return;
+				}
+
 				// Regular plot message
 				const plotMsg = parsed as PlotMessage;
 				if (plots.some((p) => p.id === plotMsg.id)) {
@@ -484,6 +501,13 @@
 					copyCurrentPlot();
 				}
 				break;
+			case 'Delete':
+			case 'Backspace':
+				if (current) {
+					e.preventDefault();
+					deletePlot(current.id);
+				}
+				break;
 		}
 	}
 
@@ -558,6 +582,83 @@
 		} catch (e) {
 			console.error('Failed to update metadata:', e);
 			showToast('metadata update failed');
+		}
+	}
+
+	function removePlotLocally(id: string) {
+		const idx = plots.findIndex((p) => p.id === id);
+		if (idx < 0) return;
+
+		// If deleting the active plot, select next or previous in filtered view
+		if (activeId === id) {
+			const filtered = filteredPlots;
+			const fi = filtered.findIndex((p) => p.id === id);
+			if (fi >= 0) {
+				if (fi < filtered.length - 1) {
+					activeId = filtered[fi + 1].id;
+				} else if (fi > 0) {
+					activeId = filtered[fi - 1].id;
+				} else {
+					activeId = null;
+				}
+			}
+		}
+
+		plots.splice(idx, 1);
+		delete thumbnails[id];
+		srcCache.delete(id);
+		const cmpIdx = compareIds.indexOf(id);
+		if (cmpIdx >= 0) compareIds.splice(cmpIdx, 1);
+	}
+
+	async function deletePlot(id: string) {
+		removePlotLocally(id);
+
+		const url = `${$page.url.protocol}//${$page.url.host}/api/plots/${id}`;
+		const body: Record<string, any> = {};
+		if (token) body.token = token;
+		try {
+			const resp = await fetch(url, {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+			});
+			if (!resp.ok) {
+				console.error('Failed to delete plot:', resp.status);
+				showToast('delete failed');
+			}
+		} catch (e) {
+			console.error('Failed to delete plot:', e);
+			showToast('delete failed');
+		}
+	}
+
+	async function clearAllPlots() {
+		if (!confirm('Clear all plots? This cannot be undone.')) return;
+
+		plots.length = 0;
+		activeId = null;
+		compareIds.length = 0;
+		compareMode = false;
+		thumbnails = {};
+		srcCache.clear();
+
+		const url = `${$page.url.protocol}//${$page.url.host}/api/plots`;
+		const body: Record<string, any> = {};
+		if (token) body.token = token;
+		try {
+			const resp = await fetch(url, {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+			});
+			if (!resp.ok) {
+				console.error('Failed to clear plots:', resp.status);
+				showToast('clear failed');
+			}
+		} catch (e) {
+			console.error('Failed to clear plots:', e);
+			showToast('clear failed');
 		}
 	}
 
@@ -691,7 +792,7 @@
 			{@const compareIdx = compareIds.indexOf(plot.id)}
 			{@const tooltip = [plot.title, humanTime(plot.timestamp), plot.notes?.split('\n')[0]].filter(Boolean).join(' — ')}
 			<button
-				class={`flex-none flex flex-col items-center gap-0.5 border p-1.5 transition-colors relative ${
+				class={`group flex-none flex flex-col items-center gap-0.5 border p-1.5 transition-colors relative ${
 					activeId === plot.id && !compareMode
 						? 'border-[var(--color-accent)] bg-[var(--color-accent-muted)]'
 						: compareIdx >= 0
@@ -709,6 +810,13 @@
 					}
 				}}
 			>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<span
+					class="absolute top-0 right-0 w-4 h-4 flex items-center justify-center text-[10px] leading-none text-[var(--color-text-faint)] hover:text-[var(--color-error)] opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer"
+					role="button"
+					tabindex="-1"
+					onclick={(e) => { e.stopPropagation(); deletePlot(plot.id); }}
+				>&times;</span>
 				{#if compareIdx >= 0}
 					<span class="absolute -top-1.5 -right-1.5 bg-[var(--color-accent)] text-[var(--color-bg)] text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center z-10">
 						{compareIdx + 1}
@@ -789,6 +897,12 @@
 				}}
 			/>
 			<SettingsMenu />
+			{#if plots.length > 0}
+				<button
+					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-error)] hover:text-[var(--color-error)] transition-colors"
+					onclick={clearAllPlots}
+				>[clear all]</button>
+			{/if}
 			<button
 				class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
 				onclick={connect}

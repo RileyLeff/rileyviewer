@@ -23,3 +23,12 @@ export type MetadataUpdate = {
 	notes?: string | null;
 	tags: string[];
 };
+
+export type DeleteBroadcast = {
+	kind: 'delete';
+	id: string;
+};
+
+export type ClearBroadcast = {
+	kind: 'clear';
+};
