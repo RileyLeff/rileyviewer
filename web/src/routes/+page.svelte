@@ -95,7 +95,6 @@
 		return result;
 	});
 
-	let hasAnyTags = $derived(plots.some((p) => p.tags && p.tags.length > 0));
 
 	function toggleCompare(id: string) {
 		const idx = compareIds.indexOf(id);
@@ -973,7 +972,7 @@
 						: 'Disconnected — click to reconnect'}
 				onclick={() => {
 					if (status === 'open' && token) {
-						navigator.clipboard.writeText(token).then(() => showToast('token copied'));
+						navigator.clipboard.writeText(token).then(() => showToast('token copied'), () => showToast('copy failed'));
 					} else if (status !== 'open' && status !== 'connecting') {
 						connect();
 					}

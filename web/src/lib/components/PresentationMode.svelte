@@ -153,6 +153,15 @@
 		}
 	}
 
+	function scrollActiveThumb(node: HTMLButtonElement, active: boolean) {
+		if (active) node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+		return {
+			update(active: boolean) {
+				if (active) node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+			}
+		};
+	}
+
 	function svgToBase64(svgData: string): string {
 		const bytes = new TextEncoder().encode(svgData);
 		let binary = '';
@@ -310,6 +319,7 @@
 						<button
 							class="shrink-0 w-16 h-10 border-2 transition-colors overflow-hidden bg-black/50 {i === currentIndex ? 'border-white/80' : 'border-white/20 hover:border-white/50'}"
 							onclick={() => { currentIndex = i; resetChromeTimer(); }}
+							use:scrollActiveThumb={i === currentIndex}
 						>
 							<span class="text-[9px] text-white/50 flex items-center justify-center h-full">
 								{plot.title || i + 1}
