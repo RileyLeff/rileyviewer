@@ -361,6 +361,52 @@ class Viewer:
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise ServerConnectionError(f"Failed to clear: {e}") from e
 
+    def save_snapshot(self, path: str | Path) -> None:
+        """Save the current session to a .rvw snapshot file.
+
+        Args:
+            path: File path to write the snapshot to.
+        """
+        path = Path(path)
+        token_param = f"?token={self._token}" if self._token else ""
+        url = f"http://{_format_host(self._host)}:{self._port}/api/snapshot{token_param}"
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                data = resp.read()
+        except urllib.error.HTTPError as e:
+            raise ServerConnectionError(f"Failed to save snapshot: HTTP {e.code}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ServerConnectionError(f"Failed to save snapshot: {e}") from e
+        path.write_bytes(data)
+
+    def load_snapshot(self, path: str | Path) -> int:
+        """Load a .rvw snapshot file into the viewer, replacing the current session.
+
+        Args:
+            path: File path to the snapshot to load.
+
+        Returns:
+            Number of plots loaded.
+        """
+        path = Path(path)
+        data = path.read_bytes()
+        token_param = f"?token={self._token}" if self._token else ""
+        url = f"http://{_format_host(self._host)}:{self._port}/api/snapshot{token_param}"
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/x-rileyviewer-snapshot"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                return result.get("loaded", 0)
+        except urllib.error.HTTPError as e:
+            raise ServerConnectionError(f"Failed to load snapshot: HTTP {e.code}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ServerConnectionError(f"Failed to load snapshot: {e}") from e
+
     def capture(self) -> "MatplotlibContext":
         return MatplotlibContext(self)
 
