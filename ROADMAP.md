@@ -132,6 +132,33 @@ The server is language-agnostic — it accepts plots via HTTP POST as PNG, SVG, 
 
 The server is already installable standalone via Homebrew, Cargo, or GitHub releases.
 
+## Mobile responsiveness
+
+Make the viewer functional on narrow screens. Not mobile-first, but usable.
+
+- **Header** — buttons overflow into a hamburger menu on `<640px`
+- **Thumbnail bar** — hides behind a drawer/hamburger toggle on narrow screens, or collapses to a swipeable bottom sheet
+- **Filter bar** — full-width stacked layout on mobile
+- **Metadata panel** — stack vertically instead of horizontal row
+- **Presentation mode** — already works (fullscreen + auto-hiding chrome); add touch swipe for navigation
+- **Plot content** — already responsive (object-contain), just needs touch gesture support for Plotly/Vega zoom
+
+Mostly a Tailwind responsive breakpoint pass — no architectural changes needed.
+
+## Statistical test output display
+
+Display statistical test results (numpyro summaries, Stan fits, scipy test outputs, statsmodels results) in the viewer the same way we display DataFrames.
+
+The challenge: no universal format across ecosystems. Pragmatic approach is per-client, leveraging each ecosystem's own display capabilities:
+
+- **Python `_repr_html_` path** — most stats libraries (arviz, statsmodels, etc.) implement `_repr_html_()`. The adapter already falls through to `send_html()` for objects with `_repr_html_`, so many outputs work today. Could add explicit detection for common types to give them better titles/tags.
+- **DataFrame coercion** — many stat outputs can be coerced to DataFrames (`arviz.summary()` returns a DataFrame, `statsmodels` results have `.summary2().tables`). Could add adapter branches that detect these and send as Arrow IPC.
+- **Pretty-print fallback** — for anything without HTML repr, capture `str()` / `repr()` and send as styled `<pre>` HTML. Not beautiful but functional.
+- **R client** — `knitr::kable()` → HTML table. Or `broom::tidy()` → DataFrame → CSV/Arrow.
+- **Julia** — `show(io, MIME("text/html"), obj)` for HTML repr, or DataFrames.jl conversion.
+
+The `_repr_html_` path gives broadest coverage with least work — it leverages each library's own display logic.
+
 ## Other ideas
 
 - **Notebook integration** — `_repr_html_()` that embeds an iframe pointing at the viewer
