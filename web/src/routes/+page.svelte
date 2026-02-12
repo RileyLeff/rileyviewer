@@ -691,6 +691,76 @@
 		}
 	}
 
+	async function snapshotSave() {
+		const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+		const url = `${$page.url.protocol}//${$page.url.host}/api/snapshot${tokenParam}`;
+		try {
+			const resp = await fetch(url);
+			if (!resp.ok) {
+				showToast(`snapshot save failed: HTTP ${resp.status}`);
+				return;
+			}
+			const blob = await resp.blob();
+			const ts = new Date();
+			const tsStr = `${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}-${String(ts.getHours()).padStart(2, '0')}${String(ts.getMinutes()).padStart(2, '0')}${String(ts.getSeconds()).padStart(2, '0')}`;
+			const a = document.createElement('a');
+			a.href = URL.createObjectURL(blob);
+			a.download = `session-${tsStr}.rvw`;
+			a.click();
+			setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+			showToast(`saved snapshot (${(blob.size / 1048576).toFixed(1)} MB)`);
+		} catch (e) {
+			console.error('Snapshot save failed:', e);
+			showToast('snapshot save failed');
+		}
+	}
+
+	async function snapshotLoad(file: File) {
+		const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+		const url = `${$page.url.protocol}//${$page.url.host}/api/snapshot${tokenParam}`;
+		try {
+			const data = await file.arrayBuffer();
+			const resp = await fetch(url, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-rileyviewer-snapshot' },
+				body: data,
+			});
+			if (!resp.ok) {
+				showToast(`snapshot load failed: HTTP ${resp.status}`);
+				return;
+			}
+			const result = await resp.json();
+			showToast(`loaded ${result.loaded} plots from snapshot`);
+		} catch (e) {
+			console.error('Snapshot load failed:', e);
+			showToast('snapshot load failed');
+		}
+	}
+
+	function snapshotPickFile() {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = '.rvw';
+		input.onchange = () => {
+			const file = input.files?.[0];
+			if (file) snapshotLoad(file);
+		};
+		input.click();
+	}
+
+	function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		const file = e.dataTransfer?.files[0];
+		if (file?.name.endsWith('.rvw')) {
+			snapshotLoad(file);
+		}
+	}
+
+	function handleDragOver(e: DragEvent) {
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+	}
+
 	async function renderVega(content: Extract<PlotContent, { type: 'Vega' }>) {
 		if (!vegaEl) return;
 		const gen = ++renderGeneration;
@@ -877,7 +947,12 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)]">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)]"
+	ondrop={handleDrop}
+	ondragover={handleDragOver}
+>
 	<header class="flex-none flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2">
 		<span class="text-sm font-semibold uppercase tracking-[0.1em]">rileyviewer</span>
 		<div class="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
@@ -930,6 +1005,16 @@
 				}}
 			/>
 			<SettingsMenu />
+			{#if plots.length > 0}
+				<button
+					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
+					onclick={snapshotSave}
+				>[save .rvw]</button>
+			{/if}
+			<button
+				class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
+				onclick={snapshotPickFile}
+			>[open .rvw]</button>
 			{#if filteredPlots.length > 0 && !compareMode}
 				<button
 					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
