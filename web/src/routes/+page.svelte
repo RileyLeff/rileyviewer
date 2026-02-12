@@ -11,6 +11,7 @@
 	import MetadataPanel from '$lib/components/MetadataPanel.svelte';
 	import CollectionsMenu from '$lib/components/CollectionsMenu.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
+	import PresentationMode from '$lib/components/PresentationMode.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 	import type { PlotContent, PlotMessage, MetadataUpdate } from '$lib/types';
@@ -68,6 +69,9 @@
 		return cm ? plots.find((p) => p.id === cm.plotId) ?? null : null;
 	});
 	let requestEditField: 'title' | 'tags' | 'notes' | null = $state(null);
+
+	// Presentation mode
+	let presenting = $state(false);
 
 	// Filter state
 	let activeTag: string | null = $state(null);
@@ -205,6 +209,7 @@
 					activeId = null;
 					compareIds.length = 0;
 					compareMode = false;
+					presenting = false;
 					thumbnails = {};
 					srcCache.clear();
 					return;
@@ -494,12 +499,19 @@
 				break;
 			}
 			case 'Escape':
-				if (contextMenu) {
+				if (presenting) {
+					presenting = false;
+				} else if (contextMenu) {
 					contextMenu = null;
 				} else if (compareMode) {
 					compareMode = false;
 				} else if (error) {
 					error = null;
+				}
+				break;
+			case 'p':
+				if (!e.ctrlKey && !e.metaKey && !e.altKey && filteredPlots.length > 0 && !compareMode) {
+					presenting = true;
 				}
 				break;
 			case 'r':
@@ -651,6 +663,7 @@
 		activeId = null;
 		compareIds.length = 0;
 		compareMode = false;
+		presenting = false;
 		thumbnails = {};
 		srcCache.clear();
 
@@ -912,6 +925,12 @@
 				}}
 			/>
 			<SettingsMenu />
+			{#if filteredPlots.length > 0 && !compareMode}
+				<button
+					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
+					onclick={() => { presenting = true; }}
+				>[present]</button>
+			{/if}
 			{#if plots.length > 0}
 				<button
 					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-error)] hover:text-[var(--color-error)] transition-colors"
@@ -1044,6 +1063,14 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if presenting}
+		<PresentationMode
+			plots={filteredPlots}
+			initialId={activeId}
+			onclose={() => { presenting = false; }}
+		/>
+	{/if}
 
 	{#if contextMenu && contextMenuPlot}
 		<ContextMenu
