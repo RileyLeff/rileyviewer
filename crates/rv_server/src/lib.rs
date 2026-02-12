@@ -639,37 +639,38 @@ struct EmbeddedAssets;
 
 #[cfg(feature = "embed-assets")]
 fn embedded_assets_service() -> Router {
-    // Serve embedded files and fall back to index.html for SPA
-    Router::new().route(
-        "/*path",
-        get(|uri: Uri| async move {
-            let path = uri.path().trim_start_matches('/');
-            let asset_path = if path.is_empty() { "index.html" } else { path };
+    async fn serve_embedded(uri: Uri) -> Response<Body> {
+        let path = uri.path().trim_start_matches('/');
+        let asset_path = if path.is_empty() { "index.html" } else { path };
 
-            if let Some(file) = EmbeddedAssets::get(asset_path) {
-                let body = Body::from(file.data.to_vec());
-                let mime = mime_guess::from_path(asset_path).first_or_octet_stream();
+        if let Some(file) = EmbeddedAssets::get(asset_path) {
+            let body = Body::from(file.data.to_vec());
+            let mime = mime_guess::from_path(asset_path).first_or_octet_stream();
+            return Response::builder()
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .body(body)
+                .expect("valid response with content-type header");
+        }
+
+        // SPA fallback: if the path doesn't look like an asset, serve index.html
+        if !asset_path.contains('.') {
+            if let Some(index) = EmbeddedAssets::get("index.html") {
+                let body = Body::from(index.data.to_vec());
                 return Response::builder()
-                    .header(header::CONTENT_TYPE, mime.as_ref())
+                    .header(header::CONTENT_TYPE, "text/html")
                     .body(body)
-                    .expect("valid response with content-type header");
+                    .expect("valid response with text/html content-type");
             }
+        }
 
-            // SPA fallback: if the path doesn't look like an asset, serve index.html
-            if !asset_path.contains('.') {
-                if let Some(index) = EmbeddedAssets::get("index.html") {
-                    let body = Body::from(index.data.to_vec());
-                    return Response::builder()
-                        .header(header::CONTENT_TYPE, "text/html")
-                        .body(body)
-                        .expect("valid response with text/html content-type");
-                }
-            }
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("404"))
+            .expect("valid 404 response")
+    }
 
-            Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("404"))
-                .expect("valid 404 response")
-        }),
-    )
+    // Both "/" and "/*path" are needed — the wildcard doesn't match bare root
+    Router::new()
+        .route("/", get(serve_embedded))
+        .route("/*path", get(serve_embedded))
 }
