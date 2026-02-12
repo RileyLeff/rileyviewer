@@ -12,7 +12,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -118,6 +118,43 @@ impl PlotState {
 
         Some(updated)
     }
+
+    /// Remove a single plot by ID and broadcast the deletion.
+    /// Returns true if the plot was found and removed.
+    async fn remove(&self, id: &str) -> bool {
+        let mut history = self.history.write().await;
+        let len_before = history.len();
+        history.retain(|p| p.id != id);
+        let removed = history.len() < len_before;
+        if removed {
+            #[derive(Serialize)]
+            struct DeleteBroadcast {
+                kind: &'static str,
+                id: String,
+            }
+            let msg = DeleteBroadcast { kind: "delete", id: id.to_string() };
+            if let Ok(json) = serde_json::to_string(&msg) {
+                let _ = self.tx.send(json);
+            }
+        }
+        removed
+    }
+
+    /// Clear all plots and broadcast the clear event.
+    async fn clear(&self) {
+        {
+            let mut history = self.history.write().await;
+            history.clear();
+        }
+        #[derive(Serialize)]
+        struct ClearBroadcast {
+            kind: &'static str,
+        }
+        let msg = ClearBroadcast { kind: "clear" };
+        if let Ok(json) = serde_json::to_string(&msg) {
+            let _ = self.tx.send(json);
+        }
+    }
 }
 
 struct InnerHandle {
@@ -144,6 +181,14 @@ impl ServerHandle {
 
     pub async fn publish(&self, msg: PlotMessage) {
         self.inner.state.push(msg).await;
+    }
+
+    pub async fn delete(&self, id: &str) -> bool {
+        self.inner.state.remove(id).await
+    }
+
+    pub async fn clear(&self) {
+        self.inner.state.clear().await;
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
@@ -246,6 +291,8 @@ fn build_router(state: PlotState, token: Option<String>, shutdown: ShutdownTx, d
         .route("/ws", get(ws_handler))
         .route("/api/publish", post(publish_handler))
         .route("/api/plots/:id/metadata", patch(update_metadata_handler))
+        .route("/api/plots", delete(clear_all_handler))
+        .route("/api/plots/:id", delete(delete_plot_handler))
         .route("/api/shutdown", post(shutdown_handler))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
         .with_state((state, token, shutdown))
@@ -440,6 +487,44 @@ async fn update_metadata_handler(
         .into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+#[derive(Deserialize)]
+struct DeletePlotRequest {
+    token: Option<String>,
+}
+
+async fn delete_plot_handler(
+    State((state, expected_token, _shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
+    Path(plot_id): Path<String>,
+    Json(req): Json<DeletePlotRequest>,
+) -> Response {
+    if !token_valid(&expected_token, req.token.as_deref()) {
+        warn!("Delete request rejected: invalid or missing token");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if state.remove(&plot_id).await {
+        StatusCode::OK.into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+#[derive(Deserialize)]
+struct ClearAllRequest {
+    token: Option<String>,
+}
+
+async fn clear_all_handler(
+    State((state, expected_token, _shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
+    Json(req): Json<ClearAllRequest>,
+) -> Response {
+    if !token_valid(&expected_token, req.token.as_deref()) {
+        warn!("Clear request rejected: invalid or missing token");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    state.clear().await;
+    StatusCode::OK.into_response()
 }
 
 fn default_dist_dir() -> std::path::PathBuf {
