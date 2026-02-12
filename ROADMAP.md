@@ -10,8 +10,15 @@ Ideas and future directions. Nothing here is promised or scheduled.
 - Browser UI with theme toggle, thumbnails, settings
 - CLI pipe (`rileyviewer send`) — pipe files or stdin directly, auto-detects PNG/SVG/Plotly/Vega/HTML
 - Keyboard shortcuts — arrow keys, Home/End, copy, reconnect, Escape
+- Metadata, tags & collections — title, notes, tags from Python or browser; filter bar, collections, search
+- Data tables — Arrow IPC and CSV rendering with virtual-scrolled table
+- Export — format picker, batch export as zip, copy to clipboard
+- File watcher — `rileyviewer watch ./figures/`
+- Comparison grid — shift-click thumbnails, side-by-side tiling
+- Clear/delete — clear all plots, delete individual plots, right-click context menu
+- Presentation mode — fullscreen slideshow with keyboard navigation
 
-## Data tables
+## Data tables (done)
 
 Render tabular data in the browser. Expands rileyviewer from "plot viewer" to "data viewer."
 
@@ -27,7 +34,7 @@ Client adapters are thin serializers:
 
 For large datasets (millions of rows), Arrow IPC + virtual scrolling handles the browser side. Server-side pagination (rows on demand) is the next step if needed.
 
-## Export
+## Export (done)
 
 Download the current plot with control over format, size, and resolution.
 
@@ -37,7 +44,7 @@ Download the current plot with control over format, size, and resolution.
 - **Batch export** — select multiple thumbnails (or a whole collection), export as a zip or multi-page PDF.
 - **Copy to clipboard** — one-click copy as image, useful for pasting into Slack/docs. (Basic version already implemented via `c` shortcut.)
 
-## File watcher
+## File watcher (done)
 
 ```bash
 rileyviewer watch ./figures/
@@ -45,7 +52,7 @@ rileyviewer watch ./figures/
 
 Auto-ingest new or modified image/SVG/HTML files from a directory. Zero integration effort — just point it at wherever your scripts dump output.
 
-## Metadata, tags & collections
+## Metadata, tags & collections (done)
 
 One unified system for organizing plots. Each layer builds on the one below it:
 
@@ -56,7 +63,7 @@ One unified system for organizing plots. Each layer builds on the one below it:
 5. **Thumbnail UX** — hover shows title + timestamp + first line of notes. Right-click for: rename, add note, tag, copy to clipboard, delete.
 6. **Search** — with enough plots, free-text search across titles, notes, and tags.
 
-## Presentation mode
+## Presentation mode (done)
 
 Fullscreen slideshow through your plots. Arrow keys to navigate, escape to exit.
 
@@ -91,7 +98,7 @@ The protocol is just a metadata field: `{"source": {"file": "experiment.py", "li
 
 Desktop notification (or Slack webhook) when a new plot arrives. Kick off a long-running job, go do something else, get pinged when results land.
 
-## Comparison grid
+## Comparison grid (done)
 
 Select 2-4 thumbnails and tile them side by side. Essential for parameter sweeps, before/after, A/B comparisons.
 
@@ -128,7 +135,5 @@ The server is already installable standalone via Homebrew, Cargo, or GitHub rele
 
 ## Other ideas
 
-- **Clear/reset** — button or API call to clear the plot history
-- **Reorder/delete** — drag to reorder or swipe to remove individual plots
 - **Notebook integration** — `_repr_html_()` that embeds an iframe pointing at the viewer
 - **WebSocket client mode** — subscribe to new plots programmatically (for testing, CI screenshots, etc.)
