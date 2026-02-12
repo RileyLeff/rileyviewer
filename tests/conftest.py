@@ -100,6 +100,38 @@ class ServerInfo:
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read())["id"]
 
+    def delete_plot(self, plot_id: str) -> int:
+        """DELETE a single plot. Returns HTTP status code."""
+        payload = json.dumps({"token": self.token}).encode()
+        url = f"{self.base_url}/api/plots/{plot_id}"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    def clear_plots(self) -> int:
+        """DELETE all plots. Returns HTTP status code."""
+        payload = json.dumps({"token": self.token}).encode()
+        url = f"{self.base_url}/api/plots"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
     def patch_metadata(self, plot_id: str, **fields) -> dict:
         """PATCH metadata on an existing plot, return the response dict.
 
