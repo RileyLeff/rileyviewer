@@ -56,3 +56,30 @@ impl PlotMessage {
         }
     }
 }
+
+/// A session snapshot containing all plots and metadata.
+/// Serialized as JSON, stored as gzip-compressed `.rvw` files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Snapshot {
+    /// Format version for forward compatibility.
+    pub version: u32,
+    /// Unix timestamp in milliseconds when the snapshot was created.
+    pub created_at: u64,
+    /// Number of plots (redundant with plots.len(), useful for quick inspection).
+    pub plot_count: usize,
+    /// All plots in chronological order.
+    pub plots: Vec<PlotMessage>,
+}
+
+impl Snapshot {
+    pub const CURRENT_VERSION: u32 = 1;
+
+    pub fn from_plots(plots: Vec<PlotMessage>) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            created_at: (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as u64,
+            plot_count: plots.len(),
+            plots,
+        }
+    }
+}
