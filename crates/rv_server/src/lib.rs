@@ -8,15 +8,17 @@ type ShutdownTx = Arc<Mutex<Option<oneshot::Sender<()>>>>;
 
 use anyhow::Context;
 use axum::{
+    body::Bytes,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
     Json, Router,
 };
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use serde::{Deserialize, Serialize};
-use rv_core::PlotMessage;
+use rv_core::{PlotMessage, Snapshot};
 use tokio::{
     net::TcpListener,
     sync::{broadcast, oneshot, RwLock},
@@ -27,7 +29,7 @@ use tower_http::services::{ServeDir, ServeFile};
 #[cfg(feature = "embed-assets")]
 use {
     axum::body::Body,
-    axum::http::{header, Uri},
+    axum::http::Uri,
     rust_embed::RustEmbed,
 };
 use futures::{SinkExt, StreamExt};
@@ -140,6 +142,14 @@ impl PlotState {
         removed
     }
 
+    /// Replace all history with the contents of a snapshot and broadcast changes.
+    async fn load_snapshot(&self, plots: Vec<PlotMessage>) {
+        self.clear().await;
+        for plot in plots {
+            self.push(plot).await;
+        }
+    }
+
     /// Clear all plots and broadcast the clear event.
     async fn clear(&self) {
         {
@@ -189,6 +199,10 @@ impl ServerHandle {
 
     pub async fn clear(&self) {
         self.inner.state.clear().await;
+    }
+
+    pub async fn load_snapshot(&self, plots: Vec<PlotMessage>) {
+        self.inner.state.load_snapshot(plots).await;
     }
 
     pub async fn shutdown(&self) -> anyhow::Result<()> {
@@ -286,6 +300,11 @@ fn build_router(state: PlotState, token: Option<String>, shutdown: ShutdownTx, d
         let serve_dir = ServeDir::new(&dist).fallback(ServeFile::new(index_path));
         Router::new().nest_service("/", serve_dir)
     };
+    // Snapshot routes get a larger body limit (100MB) for big sessions
+    let snapshot_routes = Router::new()
+        .route("/api/snapshot", get(snapshot_save_handler).post(snapshot_load_handler))
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024));
+
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
@@ -295,6 +314,7 @@ fn build_router(state: PlotState, token: Option<String>, shutdown: ShutdownTx, d
         .route("/api/plots/:id", delete(delete_plot_handler))
         .route("/api/shutdown", post(shutdown_handler))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB
+        .merge(snapshot_routes)
         .with_state((state, token, shutdown))
         .merge(spa)
 }
@@ -525,6 +545,84 @@ async fn clear_all_handler(
     }
     state.clear().await;
     StatusCode::OK.into_response()
+}
+
+async fn snapshot_save_handler(
+    State((state, expected_token, _shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
+    Query(query): Query<WsQuery>,
+) -> Response {
+    if !token_valid(&expected_token, query.token.as_deref()) {
+        warn!("Snapshot save rejected: invalid or missing token");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let history = state.history.read().await.clone();
+    let snapshot = Snapshot::from_plots(history);
+
+    let json = match serde_json::to_vec(&snapshot) {
+        Ok(j) => j,
+        Err(e) => {
+            warn!("Failed to serialize snapshot: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    if std::io::Write::write_all(&mut encoder, &json).is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let compressed = match encoder.finish() {
+        Ok(c) => c,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-rileyviewer-snapshot")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"session.rvw\"",
+        )
+        .body(axum::body::Body::from(compressed))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+async fn snapshot_load_handler(
+    State((state, expected_token, _shutdown)): State<(PlotState, Option<String>, ShutdownTx)>,
+    Query(query): Query<WsQuery>,
+    body: Bytes,
+) -> Response {
+    if !token_valid(&expected_token, query.token.as_deref()) {
+        warn!("Snapshot load rejected: invalid or missing token");
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    let mut decoder = GzDecoder::new(&body[..]);
+    let mut json_bytes = Vec::new();
+    if std::io::Read::read_to_end(&mut decoder, &mut json_bytes).is_err() {
+        return (StatusCode::BAD_REQUEST, "Invalid gzip data").into_response();
+    }
+
+    let snapshot: Snapshot = match serde_json::from_slice(&json_bytes) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid snapshot JSON").into_response(),
+    };
+
+    if snapshot.version > Snapshot::CURRENT_VERSION {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Snapshot version too new; update rileyviewer",
+        )
+            .into_response();
+    }
+
+    let count = snapshot.plots.len();
+    state.load_snapshot(snapshot.plots).await;
+
+    #[derive(Serialize)]
+    struct LoadResponse {
+        loaded: usize,
+    }
+    Json(LoadResponse { loaded: count }).into_response()
 }
 
 fn default_dist_dir() -> std::path::PathBuf {

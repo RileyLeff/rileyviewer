@@ -8,6 +8,7 @@ embed-assets = ["rust-embed", "mime_guess"]
 
 [dependencies]
 anyhow = { workspace = true }
+flate2 = "1"
 axum = { workspace = true }
 futures = { workspace = true }
 rv_config = { path = "../rv_config" }
