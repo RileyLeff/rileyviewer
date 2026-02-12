@@ -75,12 +75,8 @@
 	});
 
 	onMount(() => {
-		// Request fullscreen
-		try {
-			document.documentElement.requestFullscreen();
-		} catch {
-			// Fullscreen may not be available
-		}
+		// Request fullscreen (returns a promise; catch rejection silently)
+		document.documentElement.requestFullscreen?.()?.catch(() => {});
 
 		// Listen for fullscreen exit via browser chrome (not our Escape handler)
 		function onFullscreenChange() {

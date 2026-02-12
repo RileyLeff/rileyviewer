@@ -17,8 +17,12 @@
 
 	let { x, y, plot, isInCompare, onrename, ontags, onnotes, oncopy, ondelete, ontogglecompare, onclose }: Props = $props();
 
-	function clampToViewport(node: HTMLElement) {
-		const rect = node.getBoundingClientRect();
+	let menuEl: HTMLDivElement | null = $state(null);
+
+	// Re-clamp whenever x, y, or the element changes
+	$effect(() => {
+		if (!menuEl) return;
+		const rect = menuEl.getBoundingClientRect();
 		const vw = window.innerWidth;
 		const vh = window.innerHeight;
 
@@ -34,9 +38,9 @@
 		if (nx < 0) nx = 4;
 		if (ny < 0) ny = 4;
 
-		node.style.left = `${nx}px`;
-		node.style.top = `${ny}px`;
-	}
+		menuEl.style.left = `${nx}px`;
+		menuEl.style.top = `${ny}px`;
+	});
 
 	function handleWindowClick() {
 		onclose();
@@ -53,7 +57,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div
-	use:clampToViewport
+	bind:this={menuEl}
 	class="fixed z-50 border border-[var(--color-border)] bg-[var(--color-bg-raised)] py-1 min-w-[160px]"
 	style="left: {x}px; top: {y}px;"
 	onclick={(e) => e.stopPropagation()}

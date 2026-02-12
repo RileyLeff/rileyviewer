@@ -136,6 +136,21 @@ class TestClearAll:
         except urllib.error.HTTPError as e:
             assert e.code == 401
 
+    def test_clear_with_wrong_token_returns_401(self, server):
+        payload = json.dumps({"token": "wrong-token"}).encode()
+        url = f"{server.base_url}/api/plots"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                pytest.fail("Expected 401")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401
+
 
 class TestClearBroadcast:
     @pytest.mark.asyncio

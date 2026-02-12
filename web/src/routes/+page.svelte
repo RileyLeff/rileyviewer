@@ -463,6 +463,9 @@
 		const tag = (e.target as HTMLElement)?.tagName;
 		if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
 
+		// During presentation mode, only allow Escape (handled by PresentationMode itself)
+		if (presenting) return;
+
 		switch (e.key) {
 			case 'ArrowLeft':
 			case 'ArrowUp': {
@@ -618,14 +621,12 @@
 		if (activeId === id) {
 			const filtered = filteredPlots;
 			const fi = filtered.findIndex((p) => p.id === id);
-			if (fi >= 0) {
-				if (fi < filtered.length - 1) {
-					activeId = filtered[fi + 1].id;
-				} else if (fi > 0) {
-					activeId = filtered[fi - 1].id;
-				} else {
-					activeId = null;
-				}
+			if (fi >= 0 && fi < filtered.length - 1) {
+				activeId = filtered[fi + 1].id;
+			} else if (fi > 0) {
+				activeId = filtered[fi - 1].id;
+			} else {
+				activeId = null;
 			}
 		}
 
