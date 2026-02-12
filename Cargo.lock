@@ -1854,6 +1854,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "flate2",
  "futures",
  "mime_guess",
  "rust-embed",
