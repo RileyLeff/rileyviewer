@@ -112,9 +112,9 @@
 			const w = Math.floor(rect.width) - 16;
 			const h = Math.floor(rect.height) - 16;
 			if (w > 0 && h > 0) {
-				spec.width = spec.width ?? w;
-				spec.height = spec.height ?? h;
-				spec.autosize = spec.autosize ?? { type: 'fit', contains: 'padding' };
+				spec.width = w;
+				spec.height = h;
+				spec.autosize = { type: 'fit', contains: 'padding' };
 			}
 
 			const result = await embed(el, spec, { actions: false, renderer: 'canvas' });
