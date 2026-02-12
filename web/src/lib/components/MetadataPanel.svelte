@@ -4,13 +4,21 @@
 	interface Props {
 		plot: PlotMessage;
 		onupdate: (id: string, fields: { title?: string | null; notes?: string | null; tags?: string[] }) => void;
+		requestEdit?: 'title' | 'tags' | 'notes' | null;
+		oneditrequesthandled?: () => void;
 	}
 
-	let { plot, onupdate }: Props = $props();
+	let { plot, onupdate, requestEdit = null, oneditrequesthandled }: Props = $props();
 
 	let editingTitle = $state(false);
 	let editingTags = $state(false);
 	let editingNotes = $state(false);
+
+	$effect(() => {
+		if (requestEdit === 'title') { startEditTitle(); oneditrequesthandled?.(); }
+		else if (requestEdit === 'tags') { startEditTags(); oneditrequesthandled?.(); }
+		else if (requestEdit === 'notes') { startEditNotes(); oneditrequesthandled?.(); }
+	});
 
 	let titleDraft = $state('');
 	let tagsDraft = $state('');

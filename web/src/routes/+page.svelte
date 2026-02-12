@@ -10,6 +10,7 @@
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import MetadataPanel from '$lib/components/MetadataPanel.svelte';
 	import CollectionsMenu from '$lib/components/CollectionsMenu.svelte';
+	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import rileySticker from '$lib/assets/riley_sticker.png';
 	import { getBackground, getLinkLogo, getThumbPos } from '$lib/theme.svelte';
 	import type { PlotContent, PlotMessage, MetadataUpdate } from '$lib/types';
@@ -59,6 +60,14 @@
 	let comparePlots = $derived(
 		compareIds.map((id) => plots.find((p) => p.id === id)).filter((p): p is PlotMessage => !!p)
 	);
+
+	// Context menu state
+	let contextMenu: { x: number; y: number; plotId: string } | null = $state(null);
+	let contextMenuPlot = $derived.by(() => {
+		const cm = contextMenu;
+		return cm ? plots.find((p) => p.id === cm.plotId) ?? null : null;
+	});
+	let requestEditField: 'title' | 'tags' | 'notes' | null = $state(null);
 
 	// Filter state
 	let activeTag: string | null = $state(null);
@@ -485,7 +494,9 @@
 				break;
 			}
 			case 'Escape':
-				if (compareMode) {
+				if (contextMenu) {
+					contextMenu = null;
+				} else if (compareMode) {
 					compareMode = false;
 				} else if (error) {
 					error = null;
@@ -809,6 +820,10 @@
 						if (compareMode) compareMode = false;
 					}
 				}}
+				oncontextmenu={(e) => {
+					e.preventDefault();
+					contextMenu = { x: e.clientX, y: e.clientY, plotId: plot.id };
+				}}
 			>
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<span
@@ -930,6 +945,8 @@
 		<MetadataPanel
 			plot={current}
 			onupdate={(id, fields) => updatePlotMetadata(id, fields)}
+			requestEdit={requestEditField}
+			oneditrequesthandled={() => { requestEditField = null; }}
 		/>
 	{/if}
 
@@ -1027,6 +1044,22 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if contextMenu && contextMenuPlot}
+		<ContextMenu
+			x={contextMenu.x}
+			y={contextMenu.y}
+			plot={contextMenuPlot}
+			isInCompare={compareIds.includes(contextMenuPlot.id)}
+			onrename={() => { activeId = contextMenuPlot!.id; contextMenu = null; requestEditField = 'title'; }}
+			ontags={() => { activeId = contextMenuPlot!.id; contextMenu = null; requestEditField = 'tags'; }}
+			onnotes={() => { activeId = contextMenuPlot!.id; contextMenu = null; requestEditField = 'notes'; }}
+			oncopy={() => { activeId = contextMenuPlot!.id; contextMenu = null; copyCurrentPlot(); }}
+			ondelete={() => { const id = contextMenuPlot!.id; contextMenu = null; deletePlot(id); }}
+			ontogglecompare={() => { toggleCompare(contextMenuPlot!.id); contextMenu = null; }}
+			onclose={() => { contextMenu = null; }}
+		/>
+	{/if}
 
 	{#if toast}
 		<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2 text-xs text-[var(--color-text-muted)] shadow-lg">
