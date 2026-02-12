@@ -956,19 +956,27 @@
 	<header class="flex-none flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2">
 		<span class="text-sm font-semibold uppercase tracking-[0.1em]">rileyviewer</span>
 		<div class="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
-			<span class="flex items-center gap-1.5">
-				<span class={`inline-block h-1.5 w-1.5 rounded-full ${
+			<button
+				class={`inline-block h-2.5 w-2.5 rounded-full transition-colors cursor-pointer ${
 					status === 'open'
 						? 'bg-[var(--color-accent)]'
 						: status === 'connecting'
-							? 'bg-[var(--color-warning)]'
+							? 'bg-[var(--color-warning)] animate-pulse'
 							: 'bg-[var(--color-text-faint)]'
-				}`}></span>
-				<span>{status}</span>
-			</span>
-			{#if token}
-				<span class="text-[var(--color-accent)]">[token]</span>
-			{/if}
+				}`}
+				title={status === 'open'
+					? (token ? 'Click to copy token' : 'Connected')
+					: status === 'connecting'
+						? 'Connecting...'
+						: 'Disconnected — click to reconnect'}
+				onclick={() => {
+					if (status === 'open' && token) {
+						navigator.clipboard.writeText(token).then(() => showToast('token copied'));
+					} else if (status !== 'open' && status !== 'connecting') {
+						connect();
+					}
+				}}
+			></button>
 			{#if compareMode}
 				<button
 					class="border border-[var(--color-accent)] bg-[var(--color-accent-muted)] px-2 py-0.5 text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-bg)] transition-colors"
@@ -993,8 +1001,14 @@
 					disabled={batchExporting}
 				>[{batchExporting ? 'zipping...' : `export ${compareIds.length} as zip`}]</button>
 			{/if}
-			{#if current && !compareMode}
-				<ExportMenu content={current.content} onexport={showToast} />
+			{#if plots.length > 0 || current}
+				<ExportMenu
+					content={current && !compareMode ? current.content : null}
+					onexport={showToast}
+					plotCount={plots.length}
+					onsave={snapshotSave}
+					onopen={snapshotPickFile}
+				/>
 			{/if}
 			<CollectionsMenu
 				{activeTag}
@@ -1005,16 +1019,6 @@
 				}}
 			/>
 			<SettingsMenu />
-			{#if plots.length > 0}
-				<button
-					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-					onclick={snapshotSave}
-				>[save .rvw]</button>
-			{/if}
-			<button
-				class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-				onclick={snapshotPickFile}
-			>[open .rvw]</button>
 			{#if filteredPlots.length > 0 && !compareMode}
 				<button
 					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
@@ -1027,10 +1031,25 @@
 					onclick={clearAllPlots}
 				>[clear all]</button>
 			{/if}
-			<button
-				class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-				onclick={connect}
-			>[reconnect]</button>
+			<div class="relative group">
+				<button
+					class="border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
+				>[?]</button>
+				<div class="hidden group-hover:block absolute right-0 top-full mt-1 z-50 border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3 min-w-[220px] text-[11px] text-[var(--color-text-muted)]">
+					<div class="text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider mb-2">keyboard shortcuts</div>
+					<div class="flex flex-col gap-1">
+						<div class="flex justify-between"><span>← ↑</span><span>previous plot</span></div>
+						<div class="flex justify-between"><span>→ ↓</span><span>next plot</span></div>
+						<div class="flex justify-between"><span>Home</span><span>first plot</span></div>
+						<div class="flex justify-between"><span>End</span><span>last plot</span></div>
+						<div class="flex justify-between"><span>p</span><span>present</span></div>
+						<div class="flex justify-between"><span>r</span><span>reconnect</span></div>
+						<div class="flex justify-between"><span>c</span><span>copy plot</span></div>
+						<div class="flex justify-between"><span>Del</span><span>delete plot</span></div>
+						<div class="flex justify-between"><span>Esc</span><span>dismiss</span></div>
+					</div>
+				</div>
+			</div>
 		</div>
 	</header>
 

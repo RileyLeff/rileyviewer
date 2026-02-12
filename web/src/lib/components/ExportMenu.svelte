@@ -3,11 +3,14 @@
 	import type { PlotContent } from '$lib/types';
 
 	interface Props {
-		content: PlotContent;
+		content?: PlotContent | null;
 		onexport?: (msg: string) => void;
+		plotCount?: number;
+		onsave?: () => void;
+		onopen?: () => void;
 	}
 
-	let { content, onexport }: Props = $props();
+	let { content = null, onexport, plotCount = 0, onsave, onopen }: Props = $props();
 
 	let open = $state(false);
 	let exportError: string | null = $state(null);
@@ -53,6 +56,7 @@
 	}
 
 	function exportPng() {
+		if (!content) return;
 		const binary = atob(content.data);
 		const bytes = new Uint8Array(binary.length);
 		for (let i = 0; i < binary.length; i++) {
@@ -63,6 +67,7 @@
 	}
 
 	async function exportPngResized() {
+		if (!content) return;
 		exporting = true;
 		exportError = null;
 		try {
@@ -88,6 +93,7 @@
 	}
 
 	async function exportPlotlyPng() {
+		if (!content) return;
 		exporting = true;
 		exportError = null;
 		try {
@@ -127,6 +133,7 @@
 	}
 
 	async function exportVegaPng() {
+		if (!content) return;
 		exporting = true;
 		exportError = null;
 		try {
@@ -168,26 +175,31 @@
 	}
 
 	function exportSvg() {
+		if (!content) return;
 		downloadBlob(new Blob([content.data], { type: 'image/svg+xml' }), `plot-${timestamp()}.svg`);
 		close();
 	}
 
 	function exportJson() {
+		if (!content) return;
 		downloadBlob(new Blob([content.data], { type: 'application/json' }), `plot-${timestamp()}.json`);
 		close();
 	}
 
 	function exportHtml() {
+		if (!content) return;
 		downloadBlob(new Blob([content.data], { type: 'text/html' }), `plot-${timestamp()}.html`);
 		close();
 	}
 
 	function exportCsv() {
+		if (!content) return;
 		downloadBlob(new Blob([content.data], { type: 'text/csv' }), `data-${timestamp()}.csv`);
 		close();
 	}
 
 	function exportArrowAsCsv() {
+		if (!content) return;
 		exportError = null;
 		try {
 			const binary = atob(content.data);
@@ -219,12 +231,14 @@
 	}
 
 	function handleCustomExport() {
+		if (!content) return;
 		if (content.type === 'Png') exportPngResized();
 		else if (content.type === 'Plotly') exportPlotlyPng();
 		else if (content.type === 'Vega') exportVegaPng();
 	}
 
 	async function exportPdf() {
+		if (!content) return;
 		exporting = true;
 		exportError = null;
 		try {
@@ -244,7 +258,6 @@
 				doc.save(`plot-${timestamp()}.pdf`);
 				onexport?.(`exported plot-${timestamp()}.pdf`);
 			} else if (type === 'Svg') {
-				// Render SVG to canvas, then to PDF
 				const blob = new Blob([content.data], { type: 'image/svg+xml' });
 				const url = URL.createObjectURL(blob);
 				const img = new Image();
@@ -343,27 +356,41 @@
 			onclick={(e) => e.stopPropagation()}
 		>
 			{#if !showSizeOptions}
-				{#if content.type === 'Png'}
-					<button class={btnClass} onclick={exportPng}>[PNG (original)]</button>
-					<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
-					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
-				{:else if content.type === 'Svg'}
-					<button class={btnClass} onclick={exportSvg}>[SVG (original)]</button>
-					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
-				{:else if content.type === 'Plotly'}
-					<button class={btnClass} onclick={exportJson}>[JSON (data)]</button>
-					<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
-					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
-				{:else if content.type === 'Vega'}
-					<button class={btnClass} onclick={exportJson}>[JSON (data)]</button>
-					<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
-					<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
-				{:else if content.type === 'Html'}
-					<button class={btnClass} onclick={exportHtml}>[HTML (source)]</button>
-				{:else if content.type === 'ArrowIpc'}
-					<button class={btnClass} onclick={exportArrowAsCsv}>[CSV (converted)]</button>
-				{:else if content.type === 'Csv'}
-					<button class={btnClass} onclick={exportCsv}>[CSV (original)]</button>
+				{#if content}
+					{#if content.type === 'Png'}
+						<button class={btnClass} onclick={exportPng}>[PNG (original)]</button>
+						<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
+						<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
+					{:else if content.type === 'Svg'}
+						<button class={btnClass} onclick={exportSvg}>[SVG (original)]</button>
+						<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
+					{:else if content.type === 'Plotly'}
+						<button class={btnClass} onclick={exportJson}>[JSON (data)]</button>
+						<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
+						<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
+					{:else if content.type === 'Vega'}
+						<button class={btnClass} onclick={exportJson}>[JSON (data)]</button>
+						<button class={btnClass} onclick={() => { showSizeOptions = true; }}>[PNG (custom size)]</button>
+						<button class={btnClass} onclick={exportPdf} disabled={exporting}>[{exporting ? 'exporting...' : 'PDF'}]</button>
+					{:else if content.type === 'Html'}
+						<button class={btnClass} onclick={exportHtml}>[HTML (source)]</button>
+					{:else if content.type === 'ArrowIpc'}
+						<button class={btnClass} onclick={exportArrowAsCsv}>[CSV (converted)]</button>
+					{:else if content.type === 'Csv'}
+						<button class={btnClass} onclick={exportCsv}>[CSV (original)]</button>
+					{/if}
+				{/if}
+				{#if onsave || onopen}
+					{#if content}
+						<div class="border-t border-[var(--color-border)] my-2"></div>
+					{/if}
+					<div class="text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider mb-1">session</div>
+					{#if onsave && plotCount > 0}
+						<button class={btnClass} onclick={() => { onsave?.(); close(); }}>[save .rvw]</button>
+					{/if}
+					{#if onopen}
+						<button class={btnClass} onclick={() => { onopen?.(); close(); }}>[open .rvw]</button>
+					{/if}
 				{/if}
 			{:else}
 				<div class="text-[11px] text-[var(--color-text-faint)] uppercase tracking-wider mb-2">export size</div>
