@@ -74,13 +74,14 @@
 	let presenting = $state(false);
 
 	// Filter state
-	let activeTag: string | null = $state(null);
+	let activeTags: string[] = $state([]);
 	let searchQuery = $state('');
+	let filterOpen = $state(false);
 
 	let filteredPlots = $derived.by(() => {
 		let result = plots;
-		if (activeTag) {
-			result = result.filter((p) => p.tags?.includes(activeTag!));
+		if (activeTags.length > 0) {
+			result = result.filter((p) => activeTags.every((tag) => p.tags?.includes(tag)));
 		}
 		if (searchQuery.trim()) {
 			const q = searchQuery.trim().toLowerCase();
@@ -95,7 +96,6 @@
 	});
 
 	let hasAnyTags = $derived(plots.some((p) => p.tags && p.tags.length > 0));
-	let showFilterBar = $derived(hasAnyTags || searchQuery.length > 0);
 
 	function toggleCompare(id: string) {
 		const idx = compareIds.indexOf(id);
@@ -210,7 +210,8 @@
 					compareIds.length = 0;
 					compareMode = false;
 					presenting = false;
-					activeTag = null;
+					activeTags = [];
+					filterOpen = false;
 					searchQuery = '';
 					thumbnails = {};
 					srcCache.clear();
@@ -667,7 +668,8 @@
 		compareIds.length = 0;
 		compareMode = false;
 		presenting = false;
-		activeTag = null;
+		activeTags = [];
+		filterOpen = false;
 		searchQuery = '';
 		thumbnails = {};
 		srcCache.clear();
@@ -1010,12 +1012,21 @@
 					onopen={snapshotPickFile}
 				/>
 			{/if}
+			<button
+				class={`border px-2 py-0.5 transition-colors ${
+					activeTags.length > 0 || searchQuery.length > 0
+						? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+						: 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)]'
+				}`}
+				onclick={() => { filterOpen = !filterOpen; }}
+			>[filter{activeTags.length > 0 ? ` (${activeTags.length})` : ''}]</button>
 			<CollectionsMenu
-				{activeTag}
+				{activeTags}
 				{searchQuery}
 				onselectcollection={(c) => {
-					activeTag = c.tag ?? null;
+					activeTags = c.tag ? [c.tag] : [];
 					searchQuery = c.search ?? '';
+					if (c.tag || c.search) filterOpen = true;
 				}}
 			/>
 			<SettingsMenu />
@@ -1059,12 +1070,20 @@
 		</div>
 	{/if}
 
-	{#if showFilterBar}
+	{#if filterOpen}
 		<FilterBar
 			plots={plots}
-			{activeTag}
+			{activeTags}
 			{searchQuery}
-			ontagclick={(tag) => { activeTag = tag; }}
+			ontagtoggle={(tag) => {
+				const idx = activeTags.indexOf(tag);
+				if (idx >= 0) {
+					activeTags = activeTags.filter((t) => t !== tag);
+				} else {
+					activeTags = [...activeTags, tag];
+				}
+			}}
+			onclearfilter={() => { activeTags = []; }}
 			onsearch={(q) => { searchQuery = q; }}
 		/>
 	{/if}

@@ -3,13 +3,14 @@
 
 	interface Props {
 		plots: PlotMessage[];
-		activeTag: string | null;
+		activeTags: string[];
 		searchQuery: string;
-		ontagclick: (tag: string | null) => void;
+		ontagtoggle: (tag: string) => void;
+		onclearfilter: () => void;
 		onsearch: (query: string) => void;
 	}
 
-	let { plots, activeTag, searchQuery, ontagclick, onsearch }: Props = $props();
+	let { plots, activeTags, searchQuery, ontagtoggle, onclearfilter, onsearch }: Props = $props();
 
 	let tagCounts = $derived.by(() => {
 		const counts = new Map<string, number>();
@@ -28,21 +29,21 @@
 	<div class="flex items-center gap-1 flex-wrap min-w-0">
 		<button
 			class={`shrink-0 border px-2 py-0.5 text-xs transition-colors ${
-				activeTag === null
+				activeTags.length === 0
 					? 'border-[var(--color-accent)] text-[var(--color-accent)]'
 					: 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-text-faint)]'
 			}`}
-			onclick={() => ontagclick(null)}
+			onclick={onclearfilter}
 		>[all ({plots.length})]</button>
 
 		{#each tagCounts as [tag, count] (tag)}
 			<button
 				class={`shrink-0 border px-2 py-0.5 text-xs transition-colors ${
-					activeTag === tag
+					activeTags.includes(tag)
 						? 'border-[var(--color-accent)] text-[var(--color-accent)]'
 						: 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-text-faint)]'
 				}`}
-				onclick={() => ontagclick(tag)}
+				onclick={() => ontagtoggle(tag)}
 			>[{tag} ({count})]</button>
 		{/each}
 	</div>

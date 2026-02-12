@@ -2,12 +2,12 @@
 	import { getCollections, addCollection, removeCollection, type Collection } from '$lib/collections.svelte';
 
 	interface Props {
-		activeTag: string | null;
+		activeTags: string[];
 		searchQuery: string;
 		onselectcollection: (c: { tag?: string; search?: string; plotIds?: string[] }) => void;
 	}
 
-	let { activeTag, searchQuery, onselectcollection }: Props = $props();
+	let { activeTags, searchQuery, onselectcollection }: Props = $props();
 
 	let open = $state(false);
 	let saving = $state(false);
@@ -15,7 +15,7 @@
 
 	let collections = $derived(getCollections());
 
-	let canSave = $derived(activeTag !== null || searchQuery.length > 0);
+	let canSave = $derived(activeTags.length > 0 || searchQuery.length > 0);
 
 	function handleClickOutside(e: MouseEvent) {
 		const target = e.target as HTMLElement;
@@ -50,7 +50,7 @@
 		if (!name) return;
 		addCollection({
 			name,
-			tag: activeTag ?? undefined,
+			tag: activeTags[0] ?? undefined,
 			search: searchQuery || undefined,
 		});
 		saving = false;
