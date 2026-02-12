@@ -63,6 +63,11 @@ enum Command {
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
     },
+    /// Save or load a session snapshot
+    Snapshot {
+        #[command(subcommand)]
+        action: SnapshotAction,
+    },
     /// Watch a directory and auto-send new/modified files
     Watch {
         /// Directory or file to watch
@@ -79,6 +84,21 @@ enum Command {
         /// Comma-separated tags for all watched plots
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SnapshotAction {
+    /// Save the current session to a .rvw file
+    Save {
+        /// Output file path
+        #[arg(default_value = "session.rvw")]
+        path: PathBuf,
+    },
+    /// Load a .rvw file into the viewer
+    Open {
+        /// Snapshot file to load
+        path: PathBuf,
     },
 }
 
@@ -158,6 +178,10 @@ async fn main() -> Result<()> {
         Command::Stop => stop()?,
         Command::Open => open()?,
         Command::Send { file, r#type, title, tags } => send(file, r#type, title, tags)?,
+        Command::Snapshot { action } => match action {
+            SnapshotAction::Save { path } => snapshot_save(path)?,
+            SnapshotAction::Open { path } => snapshot_open(path)?,
+        },
         Command::Watch { path, r#type, existing, title, tags } => watch(path, r#type, existing, title, tags).await?,
     }
     Ok(())
@@ -386,6 +410,69 @@ fn send(file: Option<PathBuf>, type_override: Option<String>, title: Option<Stri
     )?;
 
     println!("Sent {} as {} (id: {})", source_name, content_type, id);
+    Ok(())
+}
+
+fn snapshot_save(path: PathBuf) -> Result<()> {
+    let state = read_state().context("No server running. Start one with: rileyviewer serve")?;
+    if !check_server_running(&state.addr) {
+        bail!("Server not running at {}. Start one with: rileyviewer serve", state.addr);
+    }
+
+    let url = format!(
+        "http://{}/api/snapshot{}",
+        state.addr,
+        state.token.as_ref().map(|t| format!("?token={}", t)).unwrap_or_default(),
+    );
+
+    let resp = ureq::get(&url)
+        .timeout(Duration::from_secs(60))
+        .call()
+        .context("failed to download snapshot")?;
+
+    let mut body = Vec::new();
+    resp.into_reader()
+        .read_to_end(&mut body)
+        .context("failed to read snapshot response")?;
+
+    fs::write(&path, &body)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+
+    println!(
+        "Saved snapshot to {} ({:.1} MB)",
+        path.display(),
+        body.len() as f64 / 1_048_576.0
+    );
+    Ok(())
+}
+
+fn snapshot_open(path: PathBuf) -> Result<()> {
+    let state = read_state().context("No server running. Start one with: rileyviewer serve")?;
+    if !check_server_running(&state.addr) {
+        bail!("Server not running at {}. Start one with: rileyviewer serve", state.addr);
+    }
+
+    let data = fs::read(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+
+    let url = format!(
+        "http://{}/api/snapshot{}",
+        state.addr,
+        state.token.as_ref().map(|t| format!("?token={}", t)).unwrap_or_default(),
+    );
+
+    let resp = ureq::post(&url)
+        .timeout(Duration::from_secs(120))
+        .set("Content-Type", "application/x-rileyviewer-snapshot")
+        .send_bytes(&data)
+        .context("failed to upload snapshot")?;
+
+    let resp_text = resp.into_string().context("failed to read response")?;
+    let body: serde_json::Value =
+        serde_json::from_str(&resp_text).context("failed to parse response")?;
+    let loaded = body.get("loaded").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    println!("Loaded {} plots from {}", loaded, path.display());
     Ok(())
 }
 
