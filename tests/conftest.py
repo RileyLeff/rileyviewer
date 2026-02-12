@@ -132,6 +132,24 @@ class ServerInfo:
         except urllib.error.HTTPError as e:
             return e.code
 
+    def save_snapshot(self) -> bytes:
+        """GET /api/snapshot, return raw gzip bytes."""
+        url = f"{self.base_url}/api/snapshot?token={self.token}"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            return resp.read()
+
+    def load_snapshot(self, data: bytes) -> int:
+        """POST /api/snapshot with gzip bytes, return loaded count."""
+        url = f"{self.base_url}/api/snapshot?token={self.token}"
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/x-rileyviewer-snapshot"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("loaded", 0)
+
     def patch_metadata(self, plot_id: str, **fields) -> dict:
         """PATCH metadata on an existing plot, return the response dict.
 
