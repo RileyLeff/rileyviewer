@@ -17,6 +17,7 @@ Ideas and future directions. Nothing here is promised or scheduled.
 - Comparison grid — shift-click thumbnails, side-by-side tiling
 - Clear/delete — clear all plots, delete individual plots, right-click context menu
 - Presentation mode — fullscreen slideshow with keyboard navigation
+- Session snapshots — save/load entire sessions as portable `.rvw` files, drag-and-drop
 
 ## Data tables (done)
 
@@ -71,13 +72,15 @@ Fullscreen slideshow through your plots. Arrow keys to navigate, escape to exit.
 - Pairs with collections: make a "results" collection, enter presentation mode, walk through it in a lab meeting.
 - Optional auto-advance timer for unattended displays.
 
-## Session snapshots
+## Session snapshots (done)
 
-Save the entire session (all plots + metadata + annotations) as a single `.rvw` file. Send it to a colleague, they open it in their viewer, see everything. Like saving a Figma file — just a zip of JSON + embedded assets under the hood.
+Save the entire session (all plots + metadata) as a single `.rvw` file. Fully portable — send it to a colleague, they open it in their viewer, see everything.
 
-- `rileyviewer snapshot save session.rvw`
-- `rileyviewer snapshot open session.rvw`
-- Could also auto-snapshot periodically for crash recovery.
+- **Format** — gzipped JSON. All plot data is inline (base64 for PNG, text for SVG/Plotly/Vega/HTML/CSV), so snapshots are self-contained with no external file references.
+- **CLI** — `rileyviewer snapshot save session.rvw` / `rileyviewer snapshot open session.rvw`
+- **Python** — `v.save_snapshot("session.rvw")` / `v.load_snapshot("session.rvw")`
+- **Browser** — save/load buttons in header, drag-and-drop `.rvw` files onto the viewer
+- **Load behavior** — replaces current session (clear + replay). Connected browsers auto-update via WebSocket.
 
 ## Plot source tracking
 
@@ -93,10 +96,6 @@ Client-side responsibility — each client library captures source info using la
 Compiled languages (Rust, Go) can skip this — not worth the complexity for file/line without source text.
 
 The protocol is just a metadata field: `{"source": {"file": "experiment.py", "line": 42, "code": "..."}}`. Opt-in — clients that don't send it just don't have a source tab.
-
-## Notifications
-
-Desktop notification (or Slack webhook) when a new plot arrives. Kick off a long-running job, go do something else, get pinged when results land.
 
 ## Comparison grid (done)
 
