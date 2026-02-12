@@ -124,6 +124,20 @@
 		{/if}
 	</div>
 
+	<!-- Notes info icon -->
+	<div class="relative group shrink-0">
+		<button
+			class="transition-colors {plot.notes ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]'} hover:text-[var(--color-accent)]"
+			onclick={startEditNotes}
+			title={plot.notes ? 'Click to edit notes' : 'Click to add notes'}
+		>(i)</button>
+		{#if plot.notes && !editingNotes}
+			<div class="hidden group-hover:block absolute left-1/2 -translate-x-1/2 top-full mt-1 z-50 border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-[300px] whitespace-pre-wrap break-words">
+				{plot.notes}
+			</div>
+		{/if}
+	</div>
+
 	<!-- Tags -->
 	<div class="flex items-center gap-1 min-w-0 flex-1">
 		{#if editingTags}
@@ -155,9 +169,9 @@
 		{/if}
 	</div>
 
-	<!-- Notes -->
-	<div class="flex items-center min-w-0 shrink-0 max-w-[30%] ml-auto">
-		{#if editingNotes}
+	<!-- Notes editing (inline at end) -->
+	{#if editingNotes}
+		<div class="flex items-center min-w-0 shrink-0 max-w-[30%] ml-auto">
 			<textarea
 				bind:value={notesDraft}
 				onblur={saveNotes}
@@ -166,12 +180,6 @@
 				class="w-full min-w-[8rem] border border-[var(--color-accent)] bg-[var(--color-bg)] text-[var(--color-text)] text-xs px-1.5 py-0.5 focus:outline-none resize-none"
 				use:focusOnMount
 			></textarea>
-		{:else}
-			<button
-				class="truncate text-left hover:text-[var(--color-accent)] transition-colors {plot.notes ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-faint)] italic'}"
-				onclick={startEditNotes}
-				title="Click to edit notes"
-			>{plot.notes || 'no notes'}</button>
-		{/if}
-	</div>
+		</div>
+	{/if}
 </div>
