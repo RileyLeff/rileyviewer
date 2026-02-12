@@ -312,6 +312,55 @@ class Viewer:
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise ServerConnectionError(f"Failed to update metadata: {e}") from e
 
+    def delete(self, plot_id: str) -> None:
+        """Delete a single plot from the server.
+
+        Args:
+            plot_id: The plot ID returned from a previous send/show call.
+
+        Raises:
+            ValueError: If the plot_id does not exist on the server.
+        """
+        url = f"http://{_format_host(self._host)}:{self._port}/api/plots/{plot_id}"
+        payload: dict = {}
+        if self._token:
+            payload["token"] = self._token
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5).close()
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise ValueError(f"Plot {plot_id!r} not found") from e
+            raise ServerConnectionError(f"Delete failed: HTTP {e.code}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ServerConnectionError(f"Failed to delete: {e}") from e
+
+    def clear(self) -> None:
+        """Clear all plots from the server."""
+        url = f"http://{_format_host(self._host)}:{self._port}/api/plots"
+        payload: dict = {}
+        if self._token:
+            payload["token"] = self._token
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5).close()
+        except urllib.error.HTTPError as e:
+            raise ServerConnectionError(f"Clear failed: HTTP {e.code}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ServerConnectionError(f"Failed to clear: {e}") from e
+
     def capture(self) -> "MatplotlibContext":
         return MatplotlibContext(self)
 
