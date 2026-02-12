@@ -210,6 +210,8 @@
 					compareIds.length = 0;
 					compareMode = false;
 					presenting = false;
+					activeTag = null;
+					searchQuery = '';
 					thumbnails = {};
 					srcCache.clear();
 					return;
@@ -664,6 +666,8 @@
 		compareIds.length = 0;
 		compareMode = false;
 		presenting = false;
+		activeTag = null;
+		searchQuery = '';
 		thumbnails = {};
 		srcCache.clear();
 
@@ -979,6 +983,7 @@
 						: 'flex gap-2 p-3 overflow-x-auto border-b border-[var(--color-border)]'
 				}`}
 				style="scrollbar-width: thin; scrollbar-color: var(--color-border) transparent;"
+				onscroll={() => { if (contextMenu) contextMenu = null; }}
 			>
 				{@render thumbStrip()}
 			</div>
@@ -1058,6 +1063,7 @@
 						: 'flex gap-2 p-3 overflow-x-auto border-t border-[var(--color-border)]'
 				}`}
 				style="scrollbar-width: thin; scrollbar-color: var(--color-border) transparent;"
+				onscroll={() => { if (contextMenu) contextMenu = null; }}
 			>
 				{@render thumbStrip()}
 			</div>
